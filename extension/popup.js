@@ -1,6 +1,5 @@
-const statusEl = document.getElementById('q-status');
 const injectBtn = document.getElementById('q-inject');
-const ftEl = document.getElementById('q-ft');
+const ftEl = document.querySelector('.ft');
 
 function findDiscordTab() {
     return new Promise(resolve => {
@@ -13,14 +12,10 @@ function findDiscordTab() {
 async function updateStatus() {
     let tab = await findDiscordTab();
     if (tab) {
-        statusEl.textContent = 'Status: Discord detected';
-        statusEl.className = 'status ok';
-        injectBtn.disabled = false;
+        injectBtn.style.display = 'block';
         ftEl.textContent = 'Click Questku to inject';
     } else {
-        statusEl.textContent = 'Status: Open Discord first';
-        statusEl.className = 'status';
-        injectBtn.disabled = true;
+        injectBtn.style.display = 'none';
         ftEl.textContent = 'Open discord.com in your browser';
     }
 }
@@ -33,8 +28,6 @@ injectBtn.addEventListener('click', async () => {
 
     injectBtn.disabled = true;
     injectBtn.textContent = 'Questku';
-    statusEl.textContent = 'Status: Injecting...';
-    statusEl.className = 'status';
 
     try {
         await chrome.tabs.update(tab.id, { active: true });
@@ -43,14 +36,11 @@ injectBtn.addEventListener('click', async () => {
             files: ['questku.js'],
             world: 'MAIN'
         });
-        statusEl.textContent = 'Status: Questku running';
-        statusEl.className = 'status ok';
         injectBtn.textContent = 'Questku';
-        ftEl.textContent = 'Dashboard should appear on Discord';
+        ftEl.textContent = 'Questku injected';
     } catch (e) {
-        statusEl.textContent = 'Status: Error - ' + e.message;
-        statusEl.className = 'status err';
         injectBtn.textContent = 'Questku';
         injectBtn.disabled = false;
+        ftEl.textContent = 'Error - refresh Discord';
     }
 });
