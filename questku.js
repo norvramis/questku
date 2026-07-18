@@ -32,7 +32,7 @@
     const TASK_NAMES = { WATCH_VIDEO: 'Watch Video', WATCH_VIDEO_ON_MOBILE: 'Watch Video', PLAY_ON_DESKTOP: 'Play Game', STREAM_ON_DESKTOP: 'Stream', PLAY_ACTIVITY: 'Activity' };
     const COLORS = { accent: '#545ded', bg: '#313338', panel: '#2b2d31', text: '#dbdee1', muted: '#80848e', border: '#1e1f22', green: '#23a55a', red: '#f23f42', amber: '#f0b232' };
 
-    let set = { autoEnroll: true, autoClaim: true, maxRetries: 3 };
+    let set = { autoEnroll: true, maxRetries: 3 };
     let uiState = { sort: 'suggested', filter: {}, progSort: 'order', progFilter: {} };
     let sortLabel = { suggested:'Suggested',reward:'Highest Reward',expires:'Ending Soon',progress:'Progress',name:'Alphabetical (A-Z)' };
     let progSortLabel = { order:'Queue Order', name:'Alphabetical', status:'Status', pct:'Progress' };
@@ -112,32 +112,24 @@
         if (q._enrolling) return true;
         q._enrolling = true;
         try {
-            let ok = false;
-            if (isBrowser) {
-                let tok = getTok();
-                if (tok) {
-                    let r = await window.fetch('https://discord.com/api/v9/quests/' + q.id + '/enroll', {
-                        method: 'POST',
-                        headers: { authorization: tok, 'content-type': 'application/json' },
-                        body: JSON.stringify({ location: 59, is_targeted: false, metadata_sealed: null, traffic_metadata_sealed: null })
-                    });
-                    let d = await r.json();
-                    ok = !!d?.userStatus?.enrolledAt;
-                }
-            } else {
-                let res = await apiReq('POST', '/quests/' + q.id + '/enroll', {
-                    location: 59, is_targeted: false, metadata_sealed: null, traffic_metadata_sealed: null
-                });
-                ok = !!res?.body?.userStatus?.enrolledAt;
-            }
+            let res = await apiReq('POST', '/quests/' + q.id + '/enroll', {
+                location: 11,
+                is_targeted: false,
+                metadata_sealed: null
+            });
+            let ok = !!res?.body?.userStatus?.enrolledAt;
+
             if (ok) {
                 log.ok('Enrolled: ' + q.config.messages.questName);
                 refreshQuests();
             } else {
-                log.e('Enroll failed: ' + q.config.messages.questName);
+                log.e('Enroll failed: ' + q.config.messages.questName + ' (Code: ' + res?.body?.code + ')');
             }
             return ok;
-        } catch { return false; }
+        } catch (e) {
+            log.e('Enroll failed: ' + q.config.messages.questName + ' (Exception: ' + e.message + ')');
+            return false;
+        }
         finally { delete q._enrolling; }
     }
 
@@ -216,12 +208,11 @@
 #questku-panel .qk-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:2px}
 #questku-panel .qk-cd{margin:6px 0;border-radius:14px;overflow:hidden;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.06);box-shadow:0 2px 8px rgba(0,0,0,.16),0 8px 32px rgba(0,0,0,.1),inset 0 1px 0 rgba(255,255,255,.05);transition:all .2s;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
 #questku-panel .qk-cd:hover{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.09);box-shadow:0 2px 8px rgba(0,0,0,.2),0 12px 40px rgba(0,0,0,.14),inset 0 1px 0 rgba(255,255,255,.06)}
-#questku-panel .qk-cd:hover .qk-ban{filter:contrast(1.12) saturate(1.18) brightness(1.08);transform:translateY(-3px)}
 #questku-panel .qk-cd.sel{box-shadow:0 2px 8px rgba(0,0,0,.22),0 8px 32px rgba(0,0,0,.16),inset 0 1px 0 rgba(255,255,255,.05)}
 #questku-panel .qk-ban-wrap{position:relative;border-radius:14px 14px 0 0;overflow:hidden;aspect-ratio:16/4.5;isolation:isolate}
-#questku-panel .qk-ban{position:absolute;inset:0;width:100%;height:120%;object-fit:cover;object-position:center 20%;filter:contrast(1.12) saturate(1.18) brightness(1.06);transition:filter .35s ease,transform .4s ease-out;z-index:0;will-change:transform}
+#questku-panel .qk-ban{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;transition:opacity .2s ease;z-index:0}
 #questku-panel .qk-ban-g{background:linear-gradient(135deg,hsla(0,0%,100%,.03),hsla(0,0%,100%,.06));height:100%}
-#questku-panel .qk-ban[src]{background:0 0}
+#questku-panel .qk-ban-vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .2s ease-in-out;z-index:1}
 #questku-panel .qk-ban-overlay{position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(to top,rgba(10,11,13,.95) 0%,rgba(10,11,13,.88) 10%,rgba(10,11,13,.75) 22%,rgba(10,11,13,.55) 35%,rgba(10,11,13,.32) 48%,rgba(10,11,13,.15) 58%,rgba(10,11,13,.06) 70%,transparent 82% 100%),linear-gradient(to right,rgba(10,11,13,.2) 0%,transparent 12%,transparent 88%,rgba(10,11,13,.2) 100%)}
 #questku-panel .qk-game-logo-wrap{position:absolute;bottom:10px;left:12px;z-index:2;pointer-events:none;display:flex;flex-direction:column;align-items:flex-start;gap:2px}
 #questku-panel .qk-game-logo{height:26px;width:auto;max-width:120px;object-fit:contain;object-position:left center;display:block}
@@ -471,20 +462,7 @@
         setupToolbar();
         updateSelBtn();
 
-        D.updateParallax = (listEl) => {
-            if (!listEl) return;
-            let containerRect = listEl.getBoundingClientRect();
-            listEl.querySelectorAll('.qk-cd').forEach(card => {
-                let img = card.querySelector('.qk-ban');
-                if (!img) return;
-                let rect = card.getBoundingClientRect();
-                let relativeY = (rect.top - containerRect.top) / (containerRect.height || 1);
-                let translateY = Math.max(-20, Math.min(20, relativeY * 40 - 20));
-                img.style.transform = `translateY(${translateY}px)`;
-            });
-        };
-        D.ql.addEventListener('scroll', () => D.updateParallax(D.ql));
-        D.pl.addEventListener('scroll', () => D.updateParallax(D.pl));
+
 
         function setupToolbar() {
             let closeAll = () => p.querySelectorAll('.qk-tl-pop.open').forEach(x => x.classList.remove('open'));
@@ -593,13 +571,23 @@
         }
 
         function switchTab(name) {
+            let targetTab;
             D.tabs.forEach(t => {
-                t.classList.toggle('act', t.dataset.t === name);
+                const isActive = t.dataset.t === name;
+                t.classList.toggle('act', isActive);
+                if (isActive) {
+                    targetTab = t;
+                    activeTab = t; // Update activeTab reference
+                }
                 D.ba.classList.toggle('act', name === 'quests');
-                D.bp.classList.toggle('act', name === 'prog');
-            });
+            D.bp.classList.toggle('act', name === 'prog');
+        });
+        if (targetTab) {
+            updateNavInd(targetTab); // Update indicator for the new active tab
         }
     }
+    window.QuestkuDebug = { st, D, processQueue, processQuest, enrollQuest };
+}
 
     function buildAssetUrl(questId, path) {
         if (!path || typeof path !== 'string') return null;
@@ -737,6 +725,8 @@
             let icoHtml = '<img src="https://cdn.discordapp.com/assets/content/fb761d9c206f93cd8c4e7301798abe3f623039a4054f2e7accd019e1bb059fc8.webm?format=webp" style="width:32px;height:32px;border-radius:6px">';
             let banUrl = q.config.assets?.quest_bar_hero || q.config.assets?.hero;
             let banFull = banUrl ? (banUrl.startsWith('http') ? banUrl : 'https://cdn.discordapp.com/' + banUrl + (banUrl.includes('?') ? '' : '?format=webp&width=1320&height=370')) : '';
+            let banVidUrl = q.config.assets?.heroVideo || q.config.assets?.questBarHeroVideo;
+            let banVid = banVidUrl ? (banVidUrl.startsWith('http') ? banVidUrl : 'https://cdn.discordapp.com/' + banVidUrl) : null;
             let selCls = q._sel ? ' sel' : '';
             let selText = q._sel ? 'Deselect' : 'Select';
             let selClsBtn = q._sel ? 'qk-sel-btn qk-bb act' : 'qk-sel-btn qk-bb';
@@ -752,8 +742,9 @@
             html += '<div class="qk-cd' + selCls + '">' +
                 '<div class="qk-ban-wrap">' +
                 (banFull ? '<img class="qk-ban" src="' + banFull + '" loading="lazy" onerror="this.style.display=\'none\'">' : '<div class="qk-ban qk-ban-g"></div>') +
+                (banVid ? '<video class="qk-ban-vid" muted loop playsinline src="' + banVid + '"></video>' : '') +
                 '<div class="qk-ban-overlay"></div>' +
-                (logoUrl ? '<div class="qk-game-logo-wrap"><img class="qk-game-logo" src="' + logoUrl + '" loading="lazy" onerror="this.style.display=\'none\'"><span class="qk-promoted">Promoted by <strong>' + (q.config.application?.name || 'Quest') + '</strong></span></div>' : '') +
+                (logoUrl ? '<div class="qk-game-logo-wrap"><img class="qk-game-logo" src="' + logoUrl + '" loading="lazy" onerror="this.style.display=\'none\'"><span class="qk-promoted">Promoted by <strong>' + (q.config.messages?.gameTitle || q.config.application?.name || 'Quest') + '</strong></span></div>' : '') +
                 '</div>' +
                 '<div class="qk-bd"><div class="qk-top">' +
                 '<div class="qk-ico ' + icoCls + '">' + icoHtml + '</div>' +
@@ -810,7 +801,22 @@
                 }
             };
         });
-        setTimeout(() => { if (D) D.updateParallax(list); }, 50);
+
+        list.querySelectorAll('.qk-ban-wrap').forEach(wrap => {
+            let img = wrap.querySelector('.qk-ban');
+            let vid = wrap.querySelector('.qk-ban-vid');
+            if (!vid) return;
+            wrap.addEventListener('mouseenter', () => {
+                vid.play();
+                vid.style.opacity = '1';
+                if (img) img.style.opacity = '0';
+            });
+            wrap.addEventListener('mouseleave', () => {
+                vid.style.opacity = '0';
+                if (img) img.style.opacity = '1';
+                setTimeout(() => vid.pause(), 200);
+            });
+        });
 
         updateAddqBtn();
         updateSelBtn();
@@ -886,13 +892,16 @@
             let icoHtml = '<img src="https://cdn.discordapp.com/assets/content/fb761d9c206f93cd8c4e7301798abe3f623039a4054f2e7accd019e1bb059fc8.webm?format=webp" style="width:32px;height:32px;border-radius:6px">';
             let banUrl = q.config.assets?.quest_bar_hero || q.config.assets?.hero;
             let banFull = banUrl ? (banUrl.startsWith('http') ? banUrl : 'https://cdn.discordapp.com/' + banUrl + (banUrl.includes('?') ? '' : '?format=webp&width=1320&height=370')) : '';
+            let banVidUrl = q.config.assets?.heroVideo || q.config.assets?.questBarHeroVideo;
+            let banVid = banVidUrl ? (banVidUrl.startsWith('http') ? banVidUrl : 'https://cdn.discordapp.com/' + banVidUrl) : null;
             let logoData = getGameLogo(q);
             let logoUrl = logoData ? logoData.url : null;
             html += '<div class="qk-cd" data-qidx="' + idx + '" data-curr="' + (item.curr || 0) + '" data-need="' + need + '" data-unit="' + unit + '" data-status="' + item.status + '">' +
                 '<div class="qk-ban-wrap">' +
                 (banFull ? '<img class="qk-ban" src="' + banFull + '" loading="lazy" onerror="this.style.display=\'none\'">' : '<div class="qk-ban qk-ban-g"></div>') +
+                (banVid ? '<video class="qk-ban-vid" muted loop playsinline src="' + banVid + '"></video>' : '') +
                 '<div class="qk-ban-overlay"></div>' +
-                (logoUrl ? '<div class="qk-game-logo-wrap"><img class="qk-game-logo" src="' + logoUrl + '" loading="lazy" onerror="this.style.display=\'none\'"><span class="qk-promoted">Promoted by <strong>' + (q.config.application?.name || 'Quest') + '</strong></span></div>' : '') +
+                (logoUrl ? '<div class="qk-game-logo-wrap"><img class="qk-game-logo" src="' + logoUrl + '" loading="lazy" onerror="this.style.display=\'none\'"><span class="qk-promoted">Promoted by <strong>' + (q.config.messages?.gameTitle || q.config.application?.name || 'Quest') + '</strong></span></div>' : '') +
                 '</div>' +
                 '<div class="qk-bd"><div class="qk-top">' +
                 '<div class="qk-ico ' + icoCls + '">' + icoHtml + '</div>' +
@@ -930,7 +939,12 @@
             });
         });
         updateStats();
-        setTimeout(() => { if (D) D.updateParallax(list); }, 50);
+        list.querySelectorAll('.qk-ban-wrap').forEach(wrap => {
+            let vid = wrap.querySelector('.qk-ban-vid');
+            if (!vid) return;
+            wrap.addEventListener('mouseenter', () => { vid.play(); vid.style.opacity = '1'; });
+            wrap.addEventListener('mouseleave', () => { vid.style.opacity = '0'; setTimeout(() => vid.pause(), 200); });
+        });
     }
 
     function updateStats() {
@@ -982,12 +996,6 @@
                 st._cleanups = st._cleanups.filter(fn => fn !== cleanupProg);
             }
             catch (e) { log.e('Quest error: ' + (e.message || e)); item.status = 'failed'; }
-
-            if (set.autoClaim && item.status === 'done') {
-                let ok = await claimQuest(item.q);
-                if (ok) log.i('Claimed: ' + item.q.config.messages.questName);
-                else log.e('Claim failed: ' + item.q.config.messages.questName);
-            }
 
             if (item.status === 'done') st.completed++;
             else if (item.status === 'failed') st.failed++;

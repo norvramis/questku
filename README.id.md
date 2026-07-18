@@ -75,7 +75,7 @@ Selesaikan quest Discord secara otomatis — cukup paste script ke DevTools atau
     const TASK_NAMES = { WATCH_VIDEO: 'Watch Video', WATCH_VIDEO_ON_MOBILE: 'Watch Video', PLAY_ON_DESKTOP: 'Play Game', STREAM_ON_DESKTOP: 'Stream', PLAY_ACTIVITY: 'Activity' };
     const COLORS = { accent: '#545ded', bg: '#313338', panel: '#2b2d31', text: '#dbdee1', muted: '#80848e', border: '#1e1f22', green: '#23a55a', red: '#f23f42', amber: '#f0b232' };
 
-    let set = { autoEnroll: true, autoClaim: true, maxRetries: 3 };
+    let set = { autoEnroll: true, maxRetries: 3 };
     let uiState = { sort: 'suggested', filter: {}, progSort: 'order', progFilter: {} };
     let sortLabel = { suggested:'Suggested',reward:'Highest Reward',expires:'Ending Soon',progress:'Progress',name:'Alphabetical (A-Z)' };
     let progSortLabel = { order:'Queue Order', name:'Alphabetical', status:'Status', pct:'Progress' };
@@ -1021,12 +1021,6 @@ Selesaikan quest Discord secara otomatis — cukup paste script ke DevTools atau
                 st._cleanups = st._cleanups.filter(fn => fn !== cleanupProg);
             }
             catch (e) { log.e('Quest error: ' + (e.message || e)); item.status = 'failed'; }
-
-            if (set.autoClaim && item.status === 'done') {
-                let ok = await claimQuest(item.q);
-                if (ok) log.i('Claimed: ' + item.q.config.messages.questName);
-                else log.e('Claim failed: ' + item.q.config.messages.questName);
-            }
 
             if (item.status === 'done') st.completed++;
             else if (item.status === 'failed') st.failed++;
