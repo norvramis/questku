@@ -18,7 +18,8 @@
         "declarativeNetRequest",
         "storage",
         "activeTab",
-        "scripting"
+        "scripting",
+        "notifications"
     ],
     "host_permissions": [
         "*://discord.com/*",
