@@ -3,28 +3,27 @@
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#whats-new">What's New</a> •
-  <a href="#features">Features</a> •
-  <a href="#how-it-works">How It Works</a> •
-  <a href="#installation">Installation</a> •
-  <a href="#usage">Usage</a> •
-  <a href="#dashboard">Dashboard</a> •
-  <a href="#console-output">Console Output</a> •
-  <a href="#technical-overview">Technical Overview</a> •
-  <a href="#faq">FAQ</a> •
+  <a href="#quick-start">Quick Start</a> <text>•</text>
+  <a href="#whats-new">What's New</a> <text>•</text>
+  <a href="#features">Features</a> <text>•</text>
+  <a href="#how-it-works">How It Works</a> <text>•</text>
+  <a href="#installation">Installation</a> <text>•</text>
+  <a href="#usage">Usage</a> <text>•</text>
+  <a href="#dashboard">Dashboard</a> <text>•</text>
+  <a href="#console-output">Console</a> <text>•</text>
+  <a href="#faq">FAQ</a> <text>•</text>
   <a href="#troubleshooting">Troubleshooting</a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/license-GPL--3.0-545ded" alt="License">
-  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Web%20%7C%20Android-80848e" alt="Platform">
-  <img src="https://img.shields.io/badge/chrome-extension-545ded" alt="Chrome Extension">
+  <img src="https://img.shields.io/badge/license-GPL--3.0-545ded?style=flat-square" alt="License">
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Web%20%7C%20Android-80848e?style=flat-square" alt="Platform">
+  <img src="https://img.shields.io/badge/chrome-extension-545ded?style=flat-square" alt="Chrome Extension">
 </p>
 
 ---
 
-Automatically enroll, complete, and claim Discord quests. Works as a script (paste to DevTools) or as a Chrome extension.
+Automatically enroll and complete Discord quests. Works as a script (paste to DevTools) or as a Chrome extension.
 
 ---
 
@@ -1613,11 +1612,9 @@ The HypeSquad tab now automatically detects and selects your owned house badge w
 
 ### Other Improvements
 
-- **Nitro orb support** — Detects your Nitro subscription and applies premium orb multiplier.
-- **Redesigned toolbar** — Sort and filter dropdowns restyled to match Discord's UI patterns.
-- **Progress tab overhaul** — Merged sort and status into a single Filter dropdown. Active queue counter added.
-- **Dropdown toggle** — Click to open, click again to close. Scrollable on overflow.
-- **Filter popup** — Right-aligned to prevent panel overflow.
+- **Quest Automation:** Enrollment reliability, Claim removed.
+- **UI/UX Improvements:** Redesigned toolbar, Progress tab overhaul, Dropdown/Filter UX.
+- **Visual & Display:** Reward display, Quest card icons, Nitro orb support.
 
 ---
 
@@ -1625,7 +1622,7 @@ The HypeSquad tab now automatically detects and selects your owned house badge w
 
 | Feature | Description |
 |---------|-------------|
-| Auto Quest Flow | Enroll -> complete -> claim. Process quests in batch with one click. |
+| Auto Quest Flow | Enroll -> complete. Process quests in batch with one click. |
 | Dual Delivery | Paste-to-DevTools script or Chrome MV3 extension. |
 | In-Page Dashboard | Drag anywhere, minimize, close. All CSS injected inline. |
 | Filter & Sort | Filter by reward type, quest type, or status. Sort by value, expiration, name, and more. |
@@ -1648,7 +1645,7 @@ Questku hijacks Discord's internal webpack module loader (`webpackChunkdiscord_a
    - **Watch Video** — Sends periodic video progress heartbeats.
    - **Play / Stream** — Spoofs a running game process to trick Discord's game detection.
    - **Activity** — Completes activity-based quests.
-5. **Quest Completion** — Once progress reaches 100%, the quest is automatically marked as complete by Discord. Claiming is handled directly by Discord's system.
+5. **Quest Completion** — Once progress reaches 100%, the quest is automatically marked as complete by Discord.
 
 > [!NOTE]
 > The script runs entirely client-side. No data is sent to any third-party server. Only Discord's official API endpoints are used.
@@ -1656,6 +1653,8 @@ Questku hijacks Discord's internal webpack module loader (`webpackChunkdiscord_a
 ---
 
 ## Installation
+
+Works on Discord **Web** (all browsers), **Desktop** (with DevTools enabled), **Chrome Extension**, and **Android** (Chrome/Kiwi/Firefox with Desktop site mode).
 
 ### Option 1: Script (DevTools)
 
@@ -1831,43 +1830,7 @@ Questku logs its activity to the browser console for debugging and monitoring.
 
 ---
 
-## Technical Overview
 
-### Webpack Module Discovery
-
-Questku locates Discord's internal modules by injecting into `webpackChunkdiscord_app` and searching for specific method signatures:
-
-| Module | Method | Purpose |
-|--------|--------|---------|
-| `Q.Quest` | `getQuest` | Quest data store |
-| `Q.Game` | `getRunningGames` | Game detection |
-| `Q.Streaming` | `getStreamerActiveStreamMetadata` | Stream detection |
-| `Q.Flux` | `flushWaitQueue` | Discord event dispatch |
-| `Q.api` | `Bo.get` | HTTP API client |
-| `Q.Channel` / `Q.Guild` | `getAllThreadsForParent` / `getSFWDefaultChannel` | Channel access |
-
-### API Endpoints Used
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/quests/:id/enroll` | POST | Enroll user in quest |
-| `/quests/:id/claim` | POST | Claim completed quest reward |
-| `/quests/:id/heartbeat` | POST | Stream/progress heartbeat |
-| `/quests/:id/video-progress` | POST | Video watch progress |
-| `/users/@me` | GET | Fetch user profile (Nitro detection, HypeSquad) |
-| `/users/@me/virtual-currency/balance` | GET | Fetch orb balance |
-
-### User Premium Detection
-
-Questku fetches `/users/@me` to read user subscription tier (`premium_type`). This enables automatic adjustment of display values and feature availability based on the user's Nitro status.
-
-### Kill & Cleanup
-
-When Kill is triggered:
-1. All queue processing stops
-2. Original Discord module properties are restored (`getRunningGames`, `getGameForPID`, `getStreamerActiveStreamMetadata`)
-3. A `RUNNING_GAMES_CHANGE` event is dispatched to clear fake games
-4. The dashboard panel is removed
 
 ---
 
@@ -1881,24 +1844,24 @@ When Kill is triggered:
 | What's the difference between Stop and Kill? | Stop halts the current quest (marks as Stopped) and moves to the next. Kill terminates everything and restores Discord internals. |
 | Nitro orb values not showing correctly? | Questku auto-detects Nitro via `/users/@me` API. Refresh the quest list or relaunch after changing subscriptions. |
 | Can I use script and extension together? | Only one instance should run at a time. Kill the script before switching to the extension. |
-| Does Questku work on mobile? | The script works in browser DevTools on Android. The extension requires Chrome desktop. |
-| What if a quest expires while queued? | Expired quests are skipped. The queue continues to the next active quest. |
-| How do I update the script after a Discord update? | Check `fallback.md` for webpack recovery steps. Update lines 6-12 in `questku.js` if module paths change. |
+| Where is the Claim button? | Claim has been removed. Completed quests now simply show "Done" with the button disabled. |
+| Why does a quest show "Unsupported"? | The quest has a task type not recognized by Questku. These quests cannot be processed automatically. |
+| Does this work on mobile? | Yes, on Android via Chrome, Kiwi Browser, or Firefox with Desktop site mode enabled. |
+| Script does nothing after paste? | Browser may block pasting. Type `allow pasting` in the console first. If still failing, refresh the page and try again. |
 
 ---
 
 ## Troubleshooting
 
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| "Discord internals not found" | Webpack module paths changed after Discord update. | Refresh page (F5) and try again. If still failing, check `fallback.md`. |
-| Script does nothing after paste | Webpack chunk not loaded or path mismatch. | Open `questku.js` and update webpack discovery lines (6-12). See `fallback.md`. |
-| DevTools won't open in Discord Desktop | Discord disables DevTools by default. | Run `enable-devtools.ps1` as Administrator, then relaunch Discord. |
-| "Questku is ready" but no dashboard | Panel may be hidden or minimized. | Press the minimize button (+) to restore. If missing, paste the script again. |
-| Queue gets stuck on "Running" | Discord API rate limits or connection issue. | Questku auto-retries with exponential backoff. Wait a few minutes or press Kill and restart. |
-| Enrolled quests skip without completing | Quest may have expired or Discord blocked the session. | Check Quests tab in Discord for the quest status. Try claiming manually. |
-| Extension not working | `rules.json` User-Agent string outdated. | Update UA string in `extension/rules.json` to match current Discord desktop version. |
-| Script in README is outdated | README embeds an older copy for reference. | Always use the latest `questku.js` from the repository root. |
+| Problem | Fix |
+|---------|-----|
+| Enroll button does nothing | Refresh the page and paste the script again. If still failing, check the console for error logs. |
+| Extension not injecting | Reload the extension in `chrome://extensions` and refresh the Discord tab. |
+| Progress stuck at 0% | The quest may need to be re-enrolled. Click Stop and add the quest again. |
+| Dashboard shows "No quests" | Accept quests in Discord's Quests tab first. Only active, unexpired quests appear. |
+| Script error on paste | Browser may block pasting. Type `allow pasting` and press Enter, then paste again. |
+| Script in README is outdated | README embeds an older copy for reference. Always use the latest `questku.js` from the repository root. |
+| How do I update after a Discord update? | Check `fallback.md` for webpack recovery steps. Update lines 6-12 in `questku.js` if module paths change. |
 
 ---
 
@@ -1919,4 +1882,5 @@ GPL-3.0. See [LICENSE](LICENSE).
 ---
 
 > **AI Assistance.** This project was developed with the assistance of AI (LLMs) to structure the code and automate the setup process.
+
 

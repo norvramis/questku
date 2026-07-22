@@ -2,7 +2,7 @@
 
 Bahasa Indonesia untuk balasan.
 
-Vanilla JS script otomatis enroll, complete, claim Discord quests via webpack hooking (`webpackChunkdiscord_app`). Dual delivery: paste-to-DevTools + Chrome MV3 extension.
+Vanilla JS script otomatis enroll & complete Discord quests via webpack hooking (`webpackChunkdiscord_app`). Dual delivery: paste-to-DevTools + Chrome MV3 extension.
 
 ## Zero build
 
@@ -14,49 +14,54 @@ No `package.json`, no npm, no test runner, no linter, no CI. Edit langsung, past
 
 ## Structure
 
-- `questku.js` — IIFE. Webpack module discovery (line 3-12), drag dashboard, quest automation. 3 tabs: All Quests, Progress, HypeSquad. `window.questkuKill()` cleanup.
-- `extension/` — Chrome MV3. `popup.html` + `popup.js`. `rules.json` (declarativeNetRequest) spoofs Electron UA.
-- `fallback.md` — guide to rediscover webpack paths.
+- `questku.js` — IIFE. Webpack module discovery (line 3-12), drag dashboard, quest automation. 3 tabs: All Quests, Progress, HypeSquad. `window.questkuKill()` cleanup. TASKS array includes: WATCH_VIDEO, PLAY_ON_DESKTOP, STREAM_ON_DESKTOP, PLAY_ACTIVITY, WATCH_VIDEO_ON_MOBILE, PLAY_ON_XBOX, PLAY_ON_PLAYSTATION.
+- `extension/` — Chrome MV3. `popup.html` + `popup.js`. Manifest uses `declarativeNetRequest` to spoof Electron UA. `background.js` injects script on Discord tab.
+- `fallback.md` — guide to rediscover webpack paths when modules break.
 - `enable-devtools.ps1` — re-enable DevTools in Discord desktop.
+- `README.md` + `README.id.md` — user docs. **Embed older copy of script** — ignore discrepancy.
+
+## Reward data structure (Discord)
+
+Reward items in `q.config.rewardsConfig.rewards[]` use `r.type` field:
+- `type: 4` → Orb (has `orbQuantity`, `premiumOrbQuantity`, `messages.name`)
+- `type: 3` → Avatar Decoration (has `asset`, `messages.name`)
+- Unknown types → fallback to legacy field detection: `r.avatarDecoration`, `r.profileEffect`, `r.profileEffectId`
+- Fallback if none match → "In-Game Reward"
+
+Key functions:
+- `getRewardTypes(q)` — returns `['orb']`, `['avatardeco']`, etc. Used by filter.
+- `getRewardHtml(q)` — returns HTML string for `.qk-rw` display. Reads `r.messages.name`.
+- `getOrbValue(rewards)` — reads `orbQuantity` / `premiumOrbQuantity` (Nitro multiplier). Used by sort.
+- `icoHtml` — quest card icon: type 3 shows `{r.asset}` thumbnail, type 4 shows generic orb webm, fallback to app icon.
+
+## Claim removed
+
+Claim button dihapus. Quest completed nampilin "Done" (disabled). Gak ada urusan claim API. Kode `_claimed`, `claimedStore`, `saveClaimed` — semuanya dihapus.
 
 ## Toolbar & dropdowns
 
-**All Quests tab:** Sort (radio) + Filter (checkbox sections). Dropdown button click = toggle (open if closed, close if open). Filter popup right-aligned (`right:0;left:auto`). Both popups scrollable at 320px max-height; scrollbar style matches `.qk-list`.
+**All Quests tab:** Sort (radio) + Filter (checkbox sections). Dropdown toggle. Filter popup `right:0;left:auto`. Both 320px max-height.
 
-Sort order: Suggested, Most Recent, Expiring Soon, Started, Highest Reward, Alphabetical (A–Z).
+Sort: Suggested, Most Recent, Expiring Soon, Started, Highest Reward, Alphabetical (A–Z).
+Filter sections: **Reward** (Orbs, Avatar Decoration, Profile Effect, In-Game Rewards), **Quest Type** (Play, Watch, Stream, Activity), **Status** (Available, In Progress, Completed, Expired). Clear button disables when inactive.
 
-Filter sections (Discord-like): **Reward** (Orbs, Avatar Decoration, Profile Effect, In-Game Rewards), **Quest Type** (Play, Watch, Stream, Activity), **Status** (Available, In Progress, Completed, Expired). Clear button at bottom.
-
-Reward type detection: `getRewardTypes(q)` — checks `rewardsConfig.rewards` items for `orbQuantity`, `avatarDecoration`, `profileEffect`, fallback `ingame`. Also detects `premiumOrbQuantity` (Nitro multiplier) but no separate filter option — value auto-adjusts per user.
-
-Filter button does NOT glow when active (no `.act` class). Clear button disables when no filter is active.
-
-**Progress tab toolbar:** `[Select All] [Filter ▼]  N Active  [Kill]  [↻]`. Single Filter dropdown merges sort + status:
-- Sort By (radio): Queue Position, Newest, Oldest, Alphabetical (A–Z)
-- Status (checkbox): Running, Pending, Paused, Done, Failed, Stopped
-- Clear resets both sort to Queue Position and all status filters
-
-Active count (`#qk-prog-active`) — plain text indicator, no background/border, shows "N Active" or "No Active".
+**Progress tab toolbar:** `[Select All] [Filter ▼] N Active [Kill] [↻]`. Filter dropdown merges sort + status. Clear resets both.
 
 ## HypeSquad tab
 
-House selection cards (base64 PNGs from `BADGES` const). Apply/Remove buttons. Current house from `public_flags`. **Auto-selects owned badge when tab is opened** (resets `hsState.selected = null` before render). House colors: Bravery `#9b59b6`, Brilliance `#e74c3c`, Balance `#1abc9c`.
-
-## Design tokens
-
-Accent `#545ded` — nav indicator, checkboxes, progress fills, toasts. Panel body `rgba(10,11,13,.7)`. Cards `rgba(255,255,255,.05)`. Popup `#1e1f22` solid, accent border `#2596BE` (active phase only).
+House cards from `BADGES` const (base64 PNGs). Current house from `public_flags`. Auto-selects owned badge on tab open. Colors: Bravery `#9b59b6`, Brilliance `#e74c3c`, Balance `#1abc9c`.
 
 ## Queue flow
 
-Two-click: Enroll → Start Queue. Items sorted by estimated duration ascending on queue start: video watch (target seconds), activity (target seconds), play/stream (target × 60). Pause/Stop targets running/paused quest. Stop marks "Stopped" (not "Failed"), resets progress, continues to next. Terminal states (done/failed/stopped) disable card select buttons.
+Enroll → Start Queue. Sorted by estimated duration ascending on queue start. Pause/Stop targets running/paused quest. Stop marks "Stopped", resets progress, continues. Terminal states disable card buttons.
 
 ## Key gotchas
 
 - **Webpack paths** (line 3-12) break every few Discord updates. Update both `questku.js` + `extension/questku.js`.
 - Browser vs desktop: script checks `navigator.userAgent.includes('Electron')`. Extension `rules.json` UA string may need updating.
-- README embeds older script copy — ignore discrepancy.
 - Kill restores original Discord module props + dispatches `RUNNING_GAMES_CHANGE`.
-- View Quest: uses `history.pushState` + `PopStateEvent` for SPA routing (no reload, no Discord app launch).
-- `getRewardTypes()` detects reward by checking reward item fields. Update if Discord adds new reward types.
-- **Nitro orb detection** — `getOrbValue()` prefers `premiumOrbQuantity` when `userPremiumType >= 2`. `fetchPremiumType()` hits `/users/@me` API (not webpack — `getCurrentUser` has no reliable module path). Called in `refreshQuests()`.
+- View Quest: uses `history.pushState` + `PopStateEvent` for SPA routing.
+- **Nitro orb detection** — `getOrbValue()` prefers `premiumOrbQuantity` when `userPremiumType >= 2`. `fetchPremiumType()` hits `/users/@me` API (not webpack). Called in `refreshQuests()`.
 - **1.2x badge** — `NITRO_BADGE` const (base64 inline from `assets/1.2x.png`). Shown next to orb text when Nitro user + quest has `premiumOrbQuantity`. CSS: `.qk-nitro-badge{height:22px;vertical-align:middle;margin-left:6px}`.
+- **API call pattern** — `directPost(url, body)` (raw fetch + token) tried first; falls back to `apiReq(method, url, body)` (Discord webpack API module) when `directPost` returns null or 4xx. Both functions exist in script.
+- **Reward types** — Discord may add new `r.type` values. Update `getRewardTypes()` + `getRewardHtml()` when new types appear.

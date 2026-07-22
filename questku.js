@@ -39,8 +39,8 @@
 
     let isBrowser = !navigator.userAgent.includes('Electron');
 
-    const TASKS = ['WATCH_VIDEO', 'PLAY_ON_DESKTOP', 'STREAM_ON_DESKTOP', 'PLAY_ACTIVITY', 'WATCH_VIDEO_ON_MOBILE'];
-    const TASK_NAMES = { WATCH_VIDEO: 'Watch Video', WATCH_VIDEO_ON_MOBILE: 'Watch Video', PLAY_ON_DESKTOP: 'Play Game', STREAM_ON_DESKTOP: 'Stream', PLAY_ACTIVITY: 'Activity' };
+    const TASKS = ['WATCH_VIDEO', 'PLAY_ON_DESKTOP', 'STREAM_ON_DESKTOP', 'PLAY_ACTIVITY', 'WATCH_VIDEO_ON_MOBILE', 'PLAY_ON_XBOX', 'PLAY_ON_PLAYSTATION'];
+    const TASK_NAMES = { WATCH_VIDEO:'Watch Video', WATCH_VIDEO_ON_MOBILE:'Watch Video', PLAY_ON_DESKTOP:'Play Game', STREAM_ON_DESKTOP:'Stream', PLAY_ACTIVITY:'Activity', PLAY_ON_XBOX:'Play Game', PLAY_ON_PLAYSTATION:'Play Game' };
     const COLORS = { accent: '#545ded', bg: '#313338', panel: '#2b2d31', text: '#dbdee1', muted: '#80848e', border: '#1e1f22', green: '#23a55a', red: '#f23f42', amber: '#f0b232' };
 
     let set = { autoEnroll: true, maxRetries: 3 };
@@ -120,8 +120,7 @@
     async function refreshQuests() {
         log.d('refreshQuests', 'start');
         st.allQuests = [...Q.Quest.quests.values()]
-            .filter(x => new Date(x.config.expiresAt).getTime() > Date.now() &&
-                TASKS.find(y => Object.keys((x.config.taskConfig ?? x.config.taskConfigV2).tasks).includes(y)))
+            .filter(x => new Date(x.config.expiresAt).getTime() > Date.now())
             .map((q, i) => { q._i = i; q._sel = false; return q; });
         let orb = await getUserOrbs();
         if (D && D.ob) D.ob.textContent = orb;
@@ -140,21 +139,43 @@
         return null;
     }
 
+    async function directPost(url, body) {
+        let tok = getTok();
+        if (!tok) return null;
+        try {
+            let r = await window.fetch('https://discord.com' + url, {
+                method: 'POST',
+                headers: { authorization: tok, 'content-type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            return { body: await r.json(), status: r.status };
+        } catch { return null; }
+    }
+
     async function enrollQuest(q) {
         log.d('enrollQuest', q.id, q.config.messages.questName);
         if (q._enrolling) return true;
         q._enrolling = true;
         try {
-            let res = await apiReq('POST', '/quests/' + q.id + '/enroll', {
+            let res = await directPost('/quests/' + q.id + '/enroll', {
                 location: 11,
                 is_targeted: false,
                 metadata_sealed: null
             });
-            let ok = !!res?.body?.userStatus?.enrolledAt;
+            if (!res || res.status >= 400) res = await apiReq('POST', '/quests/' + q.id + '/enroll', {
+                location: 11,
+                is_targeted: false,
+                metadata_sealed: null
+            });
+            let ok = res?.status >= 200 && res?.status < 300;
 
             if (ok) {
                 log.ok('Enrolled: ' + q.config.messages.questName);
-                refreshQuests();
+                if (res?.body?.userStatus) {
+                    q.userStatus = res.body.userStatus;
+                } else {
+                    q.userStatus = { ...(q.userStatus || {}), enrolledAt: new Date().toISOString() };
+                }
             } else {
                 log.e('Enroll failed: ' + q.config.messages.questName + ' (Code: ' + res?.body?.code + ')');
             }
@@ -379,6 +400,10 @@
 #questku-panel .qk-tl-pop .qk-tl-div{height:1px;background:rgba(255,255,255,.04);margin:3px 8px}
 #questku-panel .qk-prog-active{font-size:11px;color:rgba(255,255,255,.35);font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap}
 #questku-panel .qk-nitro-badge{height:22px;vertical-align:middle;margin-left:6px}
+#questku-panel .qk-rw{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+#questku-panel .qk-rw-item{display:inline-flex;align-items:center;gap:4px}
+
+#questku-panel .qk-rw-plus{color:rgba(255,255,255,.3)}
 #questku-panel .qk-tl-pop .qk-tl-clr{padding:6px 10px;border-radius:6px;cursor:pointer;font-size:10.5px;color:rgba(255,255,255,.3);transition:all .12s ease;font-family:inherit;border:0;background:0;width:100%;text-align:center;margin-top:2px}
 #questku-panel .qk-tl-pop .qk-tl-clr:hover{color:rgba(255,255,255,.7);background:rgba(255,255,255,.06)}
 #questku-panel .qk-tl-pop .qk-tl-clr:disabled{opacity:.3;cursor:not-allowed;pointer-events:none}
@@ -408,7 +433,7 @@
 #questku-panel .qk-top .qk-ico.fail{color:#f23f42;background:rgba(242,63,66,.08);border-color:rgba(242,63,66,.15)}
 #questku-panel .qk-top .qk-if{flex:1;min-width:0}
 #questku-panel .qk-top .qk-if .qk-nm{font-size:11px;color:#545ded;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;line-height:1.3;letter-spacing:.4px;text-transform:uppercase}
-#questku-panel .qk-top .qk-if .qk-rw{font-size:16px;color:#f2f3f5;font-weight:700;line-height:1.2;margin-top:2px}
+#questku-panel .qk-top .qk-if .qk-rw{font-size:16px;color:#f2f3f5;font-weight:700;line-height:1.2;margin-top:2px;display:flex;flex-wrap:wrap;align-items:center;gap:4px}
 #questku-panel .qk-top .qk-if .qk-sb{font-size:11px;color:rgba(255,255,255,.3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:opacity .18s cubic-bezier(.4,0,.2,1),transform .18s cubic-bezier(.4,0,.2,1)}
 #questku-panel .qk-cd[data-qidx] .qk-sb{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 #questku-panel .qk-cd[data-qidx]:hover .qk-sb{opacity:0;transform:translateY(-4px)}
@@ -573,6 +598,16 @@
                 await sleep(500);
                 renderAllQuests();
                 updateAddqBtn();
+
+                // Fallback: force button update if still showing Enroll
+                let stillUnenrolled = st.allQuests.filter(x => x._sel && !x.userStatus?.completedAt && !x.userStatus?.enrolledAt);
+                let nowEnrolled = st.allQuests.filter(x => x._sel && !x.userStatus?.completedAt && x.userStatus?.enrolledAt);
+                if (stillUnenrolled.length === 0 && nowEnrolled.length > 0 && D.addq.textContent.includes('Enroll')) {
+                    D.addq.textContent = nowEnrolled.length === 1 ? 'Start Queue' : 'Start Queue (' + nowEnrolled.length + ')';
+                    D.addq.disabled = false;
+                    D.addq.classList.add('enabled');
+                }
+
                 return;
             }
 
@@ -649,10 +684,13 @@
 
             document.getElementById('qk-sel-toggle').onclick = () => {
                 let all = st.allQuests;
-                let uncompleted = all.filter(x => !x.userStatus?.completedAt);
-                let allSelected = uncompleted.length > 0 && uncompleted.every(x => x._sel);
+                let selectable = all.filter(x => {
+                    let cfg = x.config.taskConfig ?? x.config.taskConfigV2;
+                    return TASKS.find(y => cfg?.tasks?.[y] != null) && !x.userStatus?.completedAt;
+                });
+                let allSelected = selectable.length > 0 && selectable.every(x => x._sel);
                 let targetState = !allSelected;
-                all.forEach(q => { if (!q.userStatus?.completedAt) q._sel = targetState; });
+                selectable.forEach(q => q._sel = targetState);
                 D.ql.querySelectorAll('.qk-cd').forEach(cd => {
                     let i = parseInt(cd.querySelector('.qk-vq')?.dataset?.i);
                     if (i >= 0 && all[i]) {
@@ -798,7 +836,7 @@
             dur = s >= 60 ? Math.floor(s / 60) + ' minute' + (Math.floor(s / 60) > 1 ? 's' : '') : s + ' second' + (s > 1 ? 's' : '');
             return need <= 1 ? 'Watch the official video.' : 'Watch the official video for ' + dur + '.';
         }
-        if (t === 'PLAY_ON_DESKTOP') {
+        if (t === 'PLAY_ON_DESKTOP' || t === 'PLAY_ON_XBOX' || t === 'PLAY_ON_PLAYSTATION') {
             let m = Math.ceil(need / 60);
             dur = m + ' minute' + (m > 1 ? 's' : '');
             return 'Play <span style="color:#545ded">' + game + '</span> for ' + dur + '.';
@@ -870,13 +908,39 @@
         let types = [];
         let rewards = q.config.rewardsConfig?.rewards || [];
         for (let r of rewards) {
-            if (r.orbQuantity || r.amount) { if (!types.includes('orb')) types.push('orb'); }
-            if (r.avatarDecoration || r.avatarDecorationDecoration) { if (!types.includes('avatardeco')) types.push('avatardeco'); }
+            let t = r.type;
+            if (t === 4 || r.orbQuantity || r.amount) { if (!types.includes('orb')) types.push('orb'); }
+            if (t === 3 || r.avatarDecoration || r.avatarDecorationDecoration) { if (!types.includes('avatardeco')) types.push('avatardeco'); }
             if (r.profileEffect || r.profileEffectId) { if (!types.includes('profileeffect')) types.push('profileeffect'); }
-            let known = r.orbQuantity || r.amount || r.avatarDecoration || r.avatarDecorationDecoration || r.profileEffect || r.profileEffectId;
+            let known = t === 3 || t === 4 || r.orbQuantity || r.amount || r.avatarDecoration || r.avatarDecorationDecoration || r.profileEffect || r.profileEffectId;
             if (!known) { if (!types.includes('ingame')) types.push('ingame'); }
         }
         return types;
+    }
+
+    function getRewardHtml(q) {
+        let rewards = q.config.rewardsConfig?.rewards || [];
+        let parts = [];
+        for (let r of rewards) {
+            let found = false;
+            if (r.type === 4 || r.orbQuantity || r.amount || r.premiumOrbQuantity) {
+                let val = (userPremiumType >= 2 && r.premiumOrbQuantity) ? r.premiumOrbQuantity : (r.orbQuantity || r.amount || 0);
+                let h = r.messages?.name || val + ' Orbs';
+                if (userPremiumType >= 2 && r.premiumOrbQuantity) h += ' <img class="qk-nitro-badge" src="' + NITRO_BADGE + '">';
+                parts.push('<span class="qk-rw-item">' + h + '</span>'); found = true;
+            }
+            if (r.type === 3 || r.avatarDecoration || r.avatarDecorationDecoration) {
+                let name = r.messages?.name || 'Avatar Decoration';
+                parts.push('<span class="qk-rw-item"><span class="qk-rw-label">' + name + '</span></span>'); found = true;
+            }
+            if (r.profileEffect || r.profileEffectId) {
+                let eff = r.profileEffect || r.profileEffectId;
+                let name = r.messages?.name || (typeof eff === 'object' ? (eff.name || 'Profile Effect') : 'Profile Effect');
+                parts.push('<span class="qk-rw-item"><span class="qk-rw-label">' + name + '</span></span>'); found = true;
+            }
+            if (!found) parts.push('<span class="qk-rw-item">' + (r.messages?.name || 'In-Game Reward') + '</span>');
+        }
+        return parts.join('<span class="qk-rw-plus"> + </span>');
     }
 
     function renderAllQuests() {
@@ -900,7 +964,7 @@
                 if (!m) return false;
             }
             if (typeActive) {
-                let m = (flt.play && t==='PLAY_ON_DESKTOP') || (flt.watch && (t==='WATCH_VIDEO'||t==='WATCH_VIDEO_ON_MOBILE')) || (flt.stream && t==='STREAM_ON_DESKTOP') || (flt.activity && t==='PLAY_ACTIVITY');
+                let m = (flt.play && (t==='PLAY_ON_DESKTOP'||t==='PLAY_ON_XBOX'||t==='PLAY_ON_PLAYSTATION')) || (flt.watch && (t==='WATCH_VIDEO'||t==='WATCH_VIDEO_ON_MOBILE')) || (flt.stream && t==='STREAM_ON_DESKTOP') || (flt.activity && t==='PLAY_ACTIVITY');
                 if (!m) return false;
             }
             if (rewardActive) {
@@ -916,30 +980,39 @@
         else if (uiState.sort === 'progress') filtered.sort((a,b) => { let p = q => { let cfg=q.config.taskConfig??q.config.taskConfigV2;let t=TASKS.find(x=>cfg?.tasks?.[x]!=null);let tg=t&&cfg?.tasks?.[t]?.target||1;return (q.userStatus?.progress?.[t]?.value||0)/tg; }; return p(b)-p(a); });
         else if (uiState.sort === 'recent') filtered.sort((a,b) => new Date(b.config.expiresAt)-new Date(a.config.expiresAt));
         else if (uiState.sort === 'started') filtered.sort((a,b) => { let ea=a.userStatus?.enrolledAt||0,eb=b.userStatus?.enrolledAt||0; return new Date(eb)-new Date(ea); });
+        if (uiState.sort === 'suggested') filtered.sort((a,b) => { let p=q=>{let cfg=q.config.taskConfig??q.config.taskConfigV2;let tt=TASKS.find(y=>cfg?.tasks?.[y]!=null);let c=!!q.userStatus?.completedAt,e=!!q.userStatus?.enrolledAt,x=new Date(q.config.expiresAt).getTime()<Date.now();if(x)return 4;if(c)return 3;if(!tt)return 2;if(e)return 1;return 0;};let d=p(a)-p(b);if(d)return d;return new Date(b.config.expiresAt)-new Date(a.config.expiresAt);});
         let html = '';
         for (let q of filtered) {
             let enrolled = !!q.userStatus?.enrolledAt;
             let completed = !!q.userStatus?.completedAt;
             let exp = new Date(q.config.expiresAt).getTime() < Date.now();
-            let stLabel = completed ? 'Done' : exp ? 'Expired' : enrolled ? 'Enrolled' : 'Not Enrolled';
-            let stCls = completed ? 'dn' : exp ? 'fl' : enrolled ? 'en' : 'pn';
-            let cb = completed ? 'checked disabled' : (q._sel ? 'checked' : '');
             let cfg = q.config.taskConfig ?? q.config.taskConfigV2;
             let t = TASKS.find(x => cfg?.tasks?.[x] != null);
+            let unsupported = !t;
+            let stLabel = unsupported ? 'Unsupported' : completed ? 'Done' : exp ? 'Expired' : enrolled ? 'Enrolled' : 'Not Enrolled';
+            let stCls = unsupported ? '' : completed ? 'dn' : exp ? 'fl' : enrolled ? 'en' : 'pn';
+            let cb = unsupported || completed ? 'disabled' : (q._sel ? 'checked' : '');
             let taskName = TASK_NAMES[t] || t || 'Quest';
             let need = t && cfg?.tasks?.[t]?.target ? cfg.tasks[t].target : 0;
             let unit = (t === 'WATCH_VIDEO' || t === 'WATCH_VIDEO_ON_MOBILE') ? 's' : 'min';
             let durStr = need ? need + unit : '';
-            let orb = getOrbValue(q.config.rewardsConfig?.rewards);
-            let icoCls = completed ? 'done' : exp ? 'fail' : '';
-            let icoHtml = '<img src="https://cdn.discordapp.com/assets/content/fb761d9c206f93cd8c4e7301798abe3f623039a4054f2e7accd019e1bb059fc8.webm?format=webp" style="width:34px;height:34px;border-radius:8px;display:block">';
+            let icoCls = '';
+            let firstReward = q.config.rewardsConfig?.rewards?.[0];
+            let rewIconUrl = firstReward?.type === 3 && firstReward.asset ? 'https://cdn.discordapp.com/' + firstReward.asset + '?format=webp&width=64&height=64' : null;
+            let appIcon = q.config.application?.id && appCache[q.config.application.id];
+            let icoHtml = rewIconUrl ? '<img src="' + rewIconUrl + '" style="width:34px;height:34px;border-radius:8px;display:block">'
+                : firstReward?.type === 4
+                ? '<img src="https://cdn.discordapp.com/assets/content/fb761d9c206f93cd8c4e7301798abe3f623039a4054f2e7accd019e1bb059fc8.webm?format=webp" style="width:34px;height:34px;border-radius:8px;display:block">'
+                : appIcon ? '<img src="https://cdn.discordapp.com/app-icons/' + q.config.application.id + '/' + appIcon + '.png?size=64" style="width:34px;height:34px;border-radius:8px;display:block">'
+                : '<img src="https://cdn.discordapp.com/assets/content/fb761d9c206f93cd8c4e7301798abe3f623039a4054f2e7accd019e1bb059fc8.webm?format=webp" style="width:34px;height:34px;border-radius:8px;display:block">';
             let banUrl = q.config.assets?.quest_bar_hero || q.config.assets?.hero;
             let banFull = banUrl ? (banUrl.startsWith('http') ? banUrl : 'https://cdn.discordapp.com/' + banUrl + (banUrl.includes('?') ? '' : '?format=webp&width=1320&height=370')) : '';
             let banVidUrl = q.config.assets?.heroVideo || q.config.assets?.questBarHeroVideo;
             let banVid = banVidUrl ? (banVidUrl.startsWith('http') ? banVidUrl : 'https://cdn.discordapp.com/' + banVidUrl) : null;
             let selCls = q._sel ? ' sel' : '';
-            let selText = q._sel ? 'Deselect' : 'Select';
+            let selText = unsupported ? 'Unsupported' : completed ? 'Done' : q._sel ? 'Deselect' : 'Select';
             let selClsBtn = q._sel ? 'qk-sel-btn qk-bb act' : 'qk-sel-btn qk-bb';
+            let selDisabled = unsupported || completed ? ' disabled' : '';
             let logoData = getGameLogo(q);
             let logoUrl = logoData ? logoData.url : null;
             if (!logoData && q.config.application?.id && !appCache[q.config.application.id] && !appFetching[q.config.application.id]) {
@@ -958,10 +1031,10 @@
                 '</div>' +
                 '<div class="qk-bd"><div class="qk-top">' +
                 '<div class="qk-ico ' + icoCls + '">' + icoHtml + '</div>' +
-                '<div class="qk-if"><div class="qk-nm">' + q.config.messages.questName + '</div><div class="qk-rw">' + (orb || 0) + ' Orbs' + (userPremiumType >= 2 && q.config.rewardsConfig?.rewards?.[0]?.premiumOrbQuantity ? ' <img class="qk-nitro-badge" src="' + NITRO_BADGE + '">' : '') + '</div><div class="qk-sb">' + getQuestDesc(q) + '</div></div>' +
+                '<div class="qk-if"><div class="qk-nm">' + q.config.messages.questName + '</div><div class="qk-rw">' + getRewardHtml(q) + '</div><div class="qk-sb">' + getQuestDesc(q) + '</div></div>' +
                 '<span class="qk-tg ' + stCls + '">' + stLabel + '</span></div>' +
                 '<div class="qk-cd-d"><div class="qk-el">' +
-                '<button class="' + selClsBtn + '" ' + (completed ? ' disabled' : '') + ' data-i="' + q._i + '">' + selText + '</button>' +
+                '<button class="' + selClsBtn + '"' + selDisabled + ' data-i="' + q._i + '">' + selText + '</button>' +
                 '<button class="qk-bb qk-vq" data-i="' + q._i + '">View Quest</button>' +
                 '</div></div></div></div>';
         }
@@ -981,26 +1054,22 @@
                 if (btn.disabled) return;
                 let i = parseInt(btn.dataset.i);
                 let q = st.allQuests[i];
-                if (q) {
-                    q._sel = !q._sel;
-                    btn.textContent = q._sel ? 'Deselect' : 'Select';
-                    btn.classList.toggle('act', q._sel);
-                    let cd = btn.closest('.qk-cd');
-                    if (cd) cd.classList.toggle('sel', q._sel);
-                    updateSelBtn();
-                    updateAddqBtn();
-                }
+                if (!q) return;
+                q._sel = !q._sel;
+                btn.textContent = q._sel ? 'Deselect' : 'Select';
+                btn.classList.toggle('act', q._sel);
+                let cd = btn.closest('.qk-cd');
+                if (cd) cd.classList.toggle('sel', q._sel);
+                updateSelBtn();
+                updateAddqBtn();
             };
         });
         list.querySelectorAll('.qk-vq').forEach(btn => {
             btn.onclick = (e) => {
-                let b = e.currentTarget;
-                let i = parseInt(b.dataset.i);
+                e.stopPropagation();
+                let i = parseInt(btn.dataset.i);
                 let q = st.allQuests[i];
-                if (q) {
-                    history.pushState(null, '', '/quests/' + q.id);
-                    window.dispatchEvent(new PopStateEvent('popstate'));
-                }
+                if (q) location.href = '/quests/' + q.id;
             };
         });
 
@@ -1055,10 +1124,13 @@
         let btn = document.getElementById('qk-sel-toggle');
         if (!btn) return;
         let all = st.allQuests;
-        let uncompleted = all.filter(x => !x.userStatus?.completedAt);
-        let selectable = uncompleted.length > 0;
-        let allSelected = selectable && uncompleted.every(x => x._sel);
-        btn.disabled = !selectable;
+        let selectable = all.filter(x => {
+            let cfg = x.config.taskConfig ?? x.config.taskConfigV2;
+            return TASKS.find(y => cfg?.tasks?.[y] != null) && !x.userStatus?.completedAt;
+        });
+        let hasSelectable = selectable.length > 0;
+        let allSelected = hasSelectable && selectable.every(x => x._sel);
+        btn.disabled = !hasSelectable;
         btn.textContent = allSelected ? 'Deselect All' : 'Select All';
     }
 
@@ -1108,13 +1180,18 @@
             let need = t && cfg?.tasks?.[t]?.target ? cfg.tasks[t].target : 0;
             let unit = (t === 'WATCH_VIDEO' || t === 'WATCH_VIDEO_ON_MOBILE') ? 's' : 'min';
             let gameName = (q.config.messages.questName || 'Quest').toUpperCase();
-            let orb = getOrbValue(q.config.rewardsConfig?.rewards);
-            let orbStr = (orb || 0) + ' Orbs';
             let selCls = item._sel ? ' sel' : '';
             let selText = item._sel ? 'Deselect' : 'Select';
             let selBtnCls = item._sel ? 'qk-sel-btn qk-bb act' : 'qk-sel-btn qk-bb';
-            let icoCls = item.status === 'done' ? 'done' : item.status === 'failed' ? 'fail' : '';
-            let icoHtml = '<img src="https://cdn.discordapp.com/assets/content/fb761d9c206f93cd8c4e7301798abe3f623039a4054f2e7accd019e1bb059fc8.webm?format=webp" style="width:34px;height:34px;border-radius:8px;display:block">';
+            let icoCls = '';
+            let firstReward = q.config.rewardsConfig?.rewards?.[0];
+            let rewIconUrl = firstReward?.type === 3 && firstReward.asset ? 'https://cdn.discordapp.com/' + firstReward.asset + '?format=webp&width=64&height=64' : null;
+            let appIcon = q.config.application?.id && appCache[q.config.application.id];
+            let icoHtml = rewIconUrl ? '<img src="' + rewIconUrl + '" style="width:34px;height:34px;border-radius:8px;display:block">'
+                : firstReward?.type === 4
+                ? '<img src="https://cdn.discordapp.com/assets/content/fb761d9c206f93cd8c4e7301798abe3f623039a4054f2e7accd019e1bb059fc8.webm?format=webp" style="width:34px;height:34px;border-radius:8px;display:block">'
+                : appIcon ? '<img src="https://cdn.discordapp.com/app-icons/' + q.config.application.id + '/' + appIcon + '.png?size=64" style="width:34px;height:34px;border-radius:8px;display:block">'
+                : '<img src="https://cdn.discordapp.com/assets/content/fb761d9c206f93cd8c4e7301798abe3f623039a4054f2e7accd019e1bb059fc8.webm?format=webp" style="width:34px;height:34px;border-radius:8px;display:block">';
             let banUrl = q.config.assets?.quest_bar_hero || q.config.assets?.hero;
             let banFull = banUrl ? (banUrl.startsWith('http') ? banUrl : 'https://cdn.discordapp.com/' + banUrl + (banUrl.includes('?') ? '' : '?format=webp&width=1320&height=370')) : '';
             let banVidUrl = q.config.assets?.heroVideo || q.config.assets?.questBarHeroVideo;
@@ -1134,7 +1211,7 @@
                 '</div>' +
                 '<div class="qk-bd"><div class="qk-top">' +
                 '<div class="qk-ico ' + icoCls + '">' + icoHtml + '</div>' +
-                '<div class="qk-if"><div class="qk-nm">' + gameName + '</div><div class="qk-rw">' + orbStr + (userPremiumType >= 2 && q.config.rewardsConfig?.rewards?.[0]?.premiumOrbQuantity ? ' <img class="qk-nitro-badge" src="' + NITRO_BADGE + '">' : '') + '</div><div class="qk-sb">' + getQuestDesc(q) + '</div>' +
+                '<div class="qk-if"><div class="qk-nm">' + gameName + '</div><div class="qk-rw">' + getRewardHtml(q) + '</div><div class="qk-sb">' + getQuestDesc(q) + '</div>' +
                 '<div class="qk-hp"><div class="qk-hp-txt"></div><div class="qk-hp-bar"><div class="qk-hp-fill ' + pCls + '"></div></div></div>' +
                 '</div>' +
                 '<span class="qk-tg ' + stCls + '">' + stLabel + '</span></div>' +
@@ -1202,15 +1279,14 @@
                 if (btn.disabled) return;
                 let i = parseInt(btn.dataset.i);
                 let item = st.queue[i];
-                if (item) {
-                    item._sel = !item._sel;
-                    btn.textContent = item._sel ? 'Deselect' : 'Select';
-                    btn.classList.toggle('act', item._sel);
-                    let cd = btn.closest('.qk-cd');
-                    if (cd) cd.classList.toggle('sel', item._sel);
-                    updateProgSelBtn();
-                    updateStats();
-                }
+                if (!item) return;
+                item._sel = !item._sel;
+                btn.textContent = item._sel ? 'Deselect' : 'Select';
+                btn.classList.toggle('act', item._sel);
+                let cd = btn.closest('.qk-cd');
+                if (cd) cd.classList.toggle('sel', item._sel);
+                updateProgSelBtn();
+                updateStats();
             };
         });
         list.querySelectorAll('.qk-vq').forEach(btn => {
@@ -1218,16 +1294,9 @@
                 e.stopPropagation();
                 let i = parseInt(btn.dataset.i);
                 let item = st.queue[i];
-                    if (item) {
-                        let qid = item.q.id;
-                        try {
-                            let h = Object.values(webpackChunkdiscord_app.push([[Symbol()], {}, r => r]));
-                            webpackChunkdiscord_app.pop();
-                            let router = Object.values(h).find(m => m?.exports?.default?.push && !m?.exports?.default?.transitionToRouter)?.exports?.default;
-                            if (router) router.push('/quests/' + qid);
-                            else window.open('https://discord.com/quests/' + qid, '_blank');
-                        } catch { window.open('https://discord.com/quests/' + qid, '_blank'); }
-                    }
+                        if (item) {
+                            location.href = '/quests/' + item.q.id;
+                        }
             };
         });
     }
@@ -1400,7 +1469,7 @@ async function processQueue() {
             }
             finish(completed);
         }
-        else if (t === 'PLAY_ON_DESKTOP') {
+        else if (t === 'PLAY_ON_DESKTOP' || t === 'PLAY_ON_XBOX' || t === 'PLAY_ON_PLAYSTATION') {
             try {
                 let d = await Q.api.get({ url: '/applications/public?application_ids=' + appId });
                 let app = d.body[0];
@@ -1412,7 +1481,7 @@ async function processQueue() {
                     let hb = function (data) {
                         if (!st.running) return;
                         if (item._paused) { updateProgTick(item); return; }
-                        let p = Math.floor(data?.userStatus?.progress?.PLAY_ON_DESKTOP?.value || 0);
+                        let p = Math.floor(data?.userStatus?.progress?.[t]?.value || 0);
                         log.i('[ ' + pct(p, need) + '% ] ' + fmtDur(log._el()));
                         item.pct = pct(p, need);
                         item.curr = p;
@@ -1465,15 +1534,15 @@ async function processQueue() {
             while (st.running) {
                 if (item._paused) { while (item._paused && st.running) await sleep(500); }
                 if (!st.running) break;
-                let res = await apiReq('POST', '/quests/' + q.id + '/heartbeat', { stream_key: 'call:' + cid + ':1', terminal: false });
-                let p = res?.body?.progress?.PLAY_ACTIVITY?.value || 0;
+                let res = await directPost('/quests/' + q.id + '/heartbeat', { stream_key: 'call:' + cid + ':1', terminal: false }) || await apiReq('POST', '/quests/' + q.id + '/heartbeat', { stream_key: 'call:' + cid + ':1', terminal: false });
+                let p = res?.body?.progress?.[t]?.value || 0;
                 log.i('[ ' + pct(p, need) + '% ] ' + fmtDur(log._el()));
                 item.pct = pct(p, need);
                 item.curr = p;
                 updateProgTick(item);
                 for (let w = 0; w < 40 && st.running && !item._paused; w++) { await sleep(500); }
                 if (item._paused) { while (item._paused && st.running) await sleep(500); }
-                if (p >= need && st.running) { await apiReq('POST', '/quests/' + q.id + '/heartbeat', { stream_key: 'call:' + cid + ':1', terminal: true }); break; }
+                if (p >= need && st.running) { await directPost('/quests/' + q.id + '/heartbeat', { stream_key: 'call:' + cid + ':1', terminal: true }) || await apiReq('POST', '/quests/' + q.id + '/heartbeat', { stream_key: 'call:' + cid + ':1', terminal: true }); break; }
             }
             finish(st.running);
         }

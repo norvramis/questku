@@ -3,27 +3,26 @@
 </p>
 
 <p align="center">
-  <a href="#cara-pakai">Cara Pakai</a> •
-  <a href="#fitur-baru">Fitur Baru</a> •
-  <a href="#fitur">Fitur</a> •
-  <a href="#cara-kerja">Cara Kerja</a> •
-  <a href="#instalasi">Instalasi</a> •
-  <a href="#dashboard">Dashboard</a> •
-  <a href="#console-output">Console Output</a> •
-  <a href="#technical-overview">Technical Overview</a> •
-  <a href="#faq">FAQ</a> •
+  <a href="#cara-pakai">Cara Pakai</a> <text>•</text>
+  <a href="#fitur-baru">Fitur Baru</a> <text>•</text>
+  <a href="#fitur">Fitur</a> <text>•</text>
+  <a href="#cara-kerja">Cara Kerja</a> <text>•</text>
+  <a href="#instalasi">Instalasi</a> <text>•</text>
+  <a href="#dashboard">Dashboard</a> <text>•</text>
+  <a href="#console-output">Console</a> <text>•</text>
+  <a href="#faq">FAQ</a> <text>•</text>
   <a href="#troubleshooting">Troubleshooting</a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/license-GPL--3.0-545ded" alt="Lisensi">
-  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Web%20%7C%20Android-80848e" alt="Platform">
-  <img src="https://img.shields.io/badge/chrome-extension-545ded" alt="Chrome Extension">
+  <img src="https://img.shields.io/badge/license-GPL--3.0-545ded?style=flat-square" alt="Lisensi">
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Web%20%7C%20Android-80848e?style=flat-square" alt="Platform">
+  <img src="https://img.shields.io/badge/chrome-extension-545ded?style=flat-square" alt="Chrome Extension">
 </p>
 
 ---
 
-Selesaikan quest Discord secara otomatis — cukup paste script ke DevTools atau pakai Chrome Extension.
+Selesaikan quest Discord secara otomatis — cukup paste script ke DevTools atau pakai Chrome Extension. Enroll dan complete, tanpa perlu claim manual.
 
 ---
 
@@ -1612,11 +1611,9 @@ Tab HypeSquad sekarang otomatis mendeteksi dan memilih badge house yang kamu mil
 
 ### Peningkatan Lainnya
 
-- **Dukungan Nitro orb** — Mendeteksi langganan Nitro dan otomatis memakai nilai orb premium.
-- **Toolbar didesain ulang** — Dropdown sort dan filter mengikuti pola UI Discord.
-- **Tab Progress diperbarui** — Sort dan status digabung dalam satu dropdown Filter. Ada indikator antrian aktif.
-- **Toggle dropdown** — Klik buka, klik lagi tutup. Scrollable jika konten panjang.
-- **Filter popup** — Rata kanan untuk mencegah overflow panel.
+- **Quest Automation:** Keandalan enrollment, Claim dihapus.
+- **UI/UX Improvements:** Toolbar didesain ulang, Tab Progress diperbarui, Toggle dropdown, Filter popup.
+- **Visual & Display:** Tampilan reward, Ikon quest card, Dukungan Nitro orb.
 
 ---
 
@@ -1624,7 +1621,7 @@ Tab HypeSquad sekarang otomatis mendeteksi dan memilih badge house yang kamu mil
 
 | Fitur | Keterangan |
 |-------|------------|
-| Alur Quest Otomatis | Enroll -> selesaikan -> claim. Proses quest batch dengan satu klik. |
+| Alur Quest Otomatis | Enroll -> selesaikan. Proses quest batch dengan satu klik. |
 | Dual Delivery | Script paste-to-DevTools atau Chrome MV3 extension. |
 | Dashboard In-Page | Drag, minimize, close. Semua CSS inline. |
 | Filter & Sort | Filter berdasarkan tipe reward, tipe quest, atau status. Sortir berdasarkan nilai, kedaluwarsa, nama. |
@@ -1647,7 +1644,7 @@ Questku memanfaatkan module loader webpack Discord (`webpackChunkdiscord_app`) u
    - **Watch Video** — Mengirim video progress heartbeat periodik.
    - **Play / Stream** — Memalsukan proses game yang berjalan untuk menipu deteksi game Discord.
    - **Activity** — Menyelesaikan quest berbasis aktivitas.
-5. **Quest Selesai** — Setelah progress mencapai 100%, quest otomatis ditandai selesai oleh Discord. Claim reward ditangani langsung oleh sistem Discord.
+5. **Quest Selesai** — Setelah progress mencapai 100%, quest otomatis ditandai selesai oleh Discord.
 
 > [!NOTE]
 > Script berjalan sepenuhnya di sisi klien. Tidak ada data yang dikirim ke server pihak ketiga. Hanya endpoint API resmi Discord yang digunakan.
@@ -1655,6 +1652,8 @@ Questku memanfaatkan module loader webpack Discord (`webpackChunkdiscord_app`) u
 ---
 
 ## Instalasi
+
+Berfungsi di Discord **Web** (semua browser), **Desktop** (dengan DevTools aktif), **Chrome Extension**, dan **Android** (Chrome/Kiwi/Firefox dengan mode Desktop site).
 
 ### Opsi 1: Script (DevTools)
 
@@ -1806,43 +1805,7 @@ Questku mencatat aktivitasnya ke console browser untuk debugging dan monitoring.
 
 ---
 
-## Technical Overview
 
-### Webpack Module Discovery
-
-Questku menemukan module internal Discord dengan menyusup ke `webpackChunkdiscord_app` dan mencari signature method tertentu:
-
-| Module | Method | Kegunaan |
-|--------|--------|----------|
-| `Q.Quest` | `getQuest` | Penyimpanan data quest |
-| `Q.Game` | `getRunningGames` | Deteksi game |
-| `Q.Streaming` | `getStreamerActiveStreamMetadata` | Deteksi streaming |
-| `Q.Flux` | `flushWaitQueue` | Dispatch event Discord |
-| `Q.api` | `Bo.get` | HTTP API client |
-| `Q.Channel` / `Q.Guild` | berbagai | Akses channel |
-
-### API Endpoints yang Digunakan
-
-| Endpoint | Method | Kegunaan |
-|----------|--------|----------|
-| `/quests/:id/enroll` | POST | Daftarkan user ke quest |
-| `/quests/:id/claim` | POST | Klaim reward quest selesai |
-| `/quests/:id/heartbeat` | POST | Heartbeat streaming/progress |
-| `/quests/:id/video-progress` | POST | Progress menonton video |
-| `/users/@me` | GET | Ambil profil user (deteksi Nitro, HypeSquad) |
-| `/users/@me/virtual-currency/balance` | GET | Ambil saldo orb |
-
-### Deteksi Premium User
-
-Questku mengambil `/users/@me` untuk membaca tingkat subscription user (`premium_type`). Ini memungkinkan penyesuaian otomatis nilai tampilan dan ketersediaan fitur berdasarkan status Nitro user.
-
-### Kill & Cleanup
-
-Saat Kill dipicu:
-1. Semua pemrosesan antrian berhenti
-2. Properti module Discord asli dikembalikan (`getRunningGames`, `getGameForPID`, `getStreamerActiveStreamMetadata`)
-3. Event `RUNNING_GAMES_CHANGE` dikirim untuk membersihkan game palsu
-4. Panel dashboard dihapus
 
 ---
 
@@ -1856,24 +1819,24 @@ Saat Kill dipicu:
 | Apa beda Stop dan Kill? | Stop menghentikan quest saat ini (Stopped) dan lanjut ke berikutnya. Kill menghentikan semuanya dan restore internal Discord. |
 | Nilai Nitro orb tidak sesuai? | Questku auto-detect Nitro via API `/users/@me`. Refresh daftar quest setelah ganti subscription. |
 | Bisa pakai script dan extension bersamaan? | Hanya satu instance yang boleh berjalan. Kill script sebelum beralih ke extension. |
-| Apakah Questku bekerja di mobile? | Script bisa di browser Android dengan DevTools. Extension butuh Chrome desktop. |
-| Apa yang terjadi jika quest kedaluwarsa? | Quest kedaluwarsa dilewati. Antrian lanjut ke quest aktif berikutnya. |
-| Bagaimana update script setelah update Discord? | Cek `fallback.md` untuk langkah recovery webpack. Update baris 6-12 di `questku.js`. |
+| Kemana tombol Claim? | Claim sudah dihapus. Quest selesai nampilin "Done" dengan tombol nonaktif. |
+| Kenapa quest nampilin "Unsupported"? | Quest punya tipe tugas yang tidak dikenal Questku. Quest ini tidak bisa diproses otomatis. |
+| Apakah ini bekerja di mobile? | Bisa, di Android via Chrome, Kiwi Browser, atau Firefox dengan mode Desktop site. |
+| Script tidak berefek setelah paste? | Browser mungkin memblokir paste. Ketik `allow pasting` di console dulu. Jika masih gagal, refresh halaman. |
 
 ---
 
 ## Troubleshooting
 
-| Masalah | Penyebab | Solusi |
-|---------|----------|--------|
-| "Discord internals not found" | Path module webpack berubah setelah update Discord. | Refresh halaman (F5) dan coba lagi. Jika masih gagal, cek `fallback.md`. |
-| Script tidak berefek setelah di-paste | Webpack chunk tidak ditemukan. | Update baris discovery webpack (6-12) di `questku.js`. Lihat `fallback.md`. |
-| DevTools tidak bisa dibuka di Discord Desktop | Discord nonaktifkan DevTools. | Jalankan `enable-devtools.ps1` sebagai Administrator, restart Discord. |
-| "Questku is ready" tapi dashboard tidak muncul | Panel mungkin tersembunyi atau di-minimize. | Tekan tombol minimize (+) untuk mengembalikan. |
-| Antrian macet di status "Running" | Rate limit API Discord. | Questku auto-retry. Tunggu beberapa menit atau tekan Kill dan restart. |
-| Quest di-enroll tapi langsung skip | Quest mungkin kedaluwarsa atau sesi diblokir. | Cek tab Quests Discord. Coba claim manual. |
-| Extension tidak berfungsi | `rules.json` User-Agent string usang. | Update string UA di `extension/rules.json` sesuai versi Discord. |
-| Script di README sudah usang | README menyematkan kopian lama. | Selalu gunakan `questku.js` terbaru dari root repository. |
+| Masalah | Solusi |
+|---------|--------|
+| Tombol Enroll tidak berefek | Refresh halaman dan paste ulang script. Cek console untuk log error. |
+| Extension tidak inject | Reload extension di `chrome://extensions` dan refresh tab Discord. |
+| Progress stuck di 0% | Quest mungkin perlu di-enroll ulang. Klik Stop dan tambah quest lagi. |
+| Dashboard nampilin "No quests" | Terima quest di tab Quests Discord dulu. Hanya quest aktif yang muncul. |
+| Error saat paste script | Ketik `allow pasting` dan Enter, lalu paste lagi. |
+| Script di README sudah usang | README menyematkan kopian lama. Selalu gunakan `questku.js` terbaru dari root repository. |
+| Cara update setelah Discord update? | Cek `fallback.md` untuk langkah recovery webpack. Update baris 6-12 di `questku.js`. |
 
 ---
 
@@ -1894,4 +1857,5 @@ GPL-3.0. Lihat [LICENSE](LICENSE).
 ---
 
 > **AI Assistance.** Project ini dikembangkan dengan bantuan AI (LLM) untuk menyusun kode dan mengotomatiskan proses setup.
+
 
