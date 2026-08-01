@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build extension zip
+        run: |
+          cd extension
+          zip -r ../questku-extension.zip .
+        working-directory: ${{ github.workspace }}
+
+      - name: Copy script
+        run: cp questku.js questku-${{ github.ref_name }}.js
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            questku-${{ github.ref_name }}.js
+            questku-extension.zip
+          generate_release_notes: true

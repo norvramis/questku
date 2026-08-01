@@ -1,0 +1,11 @@
+node_modules/
+.DS_Store
+Thumbs.db
+
+extension/_metadata/
+extension/assets/Questku.png
+
+package*.json
+
+.claude/
+questku.md
