@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build (inject src/core into src/questku.js)
+        run: npm run build
+
+      - name: Syntax check
+        run: |
+          node --check questku.js
+          node --check extension/questku.js
+
+      - name: Sync check (questku.js vs extension/questku.js)
+        run: node -e "const fs=require('fs'); if(fs.readFileSync('questku.js').toString()!==fs.readFileSync('extension/questku.js').toString())throw new Error('Files do not match')"
+
+      - name: Tests (relay security + core rewards)
+        run: npm test

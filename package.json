@@ -1,0 +1,11 @@
+{
+  "name": "questku",
+  "version": "1.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Discord quest automation — vanilla JS, paste-to-DevTools + Chrome extension",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "test": "node --test \"tests/*.test.js\""
+  }
+}

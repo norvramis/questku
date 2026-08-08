@@ -33,6 +33,10 @@ async function exec(fn) {
     try { await chrome.scripting.executeScript({ target: { tabId }, func: fn, world: 'MAIN' }); } catch {}
 }
 
+async function execIsolated(files) {
+    try { await chrome.scripting.executeScript({ target: { tabId }, files: files, world: 'ISOLATED' }); } catch {}
+}
+
 async function execResult(fn) {
     try {
         let r = await chrome.scripting.executeScript({ target: { tabId }, func: fn, world: 'MAIN' });
@@ -117,6 +121,9 @@ async function refreshState() {
     bQ.onclick = async () => {
         bQ.disabled = true; bQ.textContent = 'Opening...';
         await chrome.tabs.update(tabId, { active: true });
+        // Ensure the MAIN↔SW bridge exists even if the tab predates an extension reload
+        // (content.js is idempotent via window.__qkContentBound).
+        await execIsolated(['content.js']);
         await execFile('questku.js');
         await exec(() => {
             try {

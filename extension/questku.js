@@ -1,6 +1,7 @@
 (function questku() {
 
     if (!location.hostname.endsWith('discord.com')) { console.log('[!] Questku: not on Discord web'); return; }
+    console.log('%c[Questku]%c v1.1.0', 'color:#545ded;font-weight:bold', 'color:#80848e');
 
     let wpRequire = webpackChunkdiscord_app.push([[Symbol()], {}, r => r]);
     webpackChunkdiscord_app.pop();
@@ -12,6 +13,55 @@
     Q.Guild = Object.values(wpRequire.c).find(x => x?.exports?.Ay?.getSFWDefaultChannel)?.exports?.Ay;
     Q.Flux = Object.values(wpRequire.c).find(x => x?.exports?.h?.__proto__?.flushWaitQueue)?.exports?.h;
     Q.api = Object.values(wpRequire.c).find(x => x?.exports?.Bo?.get)?.exports?.Bo;
+
+    // Dynamic super properties & UA detection
+    let SuperProps = Object.values(wpRequire.c).find(x => x?.exports?.getSuperProperties)?.exports;
+    let DeviceInfo = Object.values(wpRequire.c).find(x => x?.exports?.getDeviceInfo)?.exports;
+
+    function getDesktopSuperProperties() {
+        try {
+            let val;
+            if (SuperProps?.getSuperProperties) val = SuperProps.getSuperProperties();
+            else if (DeviceInfo?.getSuperProperties) val = DeviceInfo.getSuperProperties();
+            if (val) {
+                if (typeof val === 'string' && val.length > 40) {
+                    try { JSON.parse(atob(val)); return val; } catch {}
+                }
+                return btoa(JSON.stringify(val));
+            }
+        } catch {}
+        // Fallback: construct minimal valid super properties
+        return btoa(JSON.stringify({
+            os: 'Windows',
+            browser: 'Discord Client',
+            release_channel: 'stable',
+            client_version: '1.0.9000',
+            os_version: '10.0.22621',
+            os_arch: 'x64',
+            app_arch: 'x64',
+            system_locale: 'en-US',
+            has_client_mods: false,
+            client_build_number: 500000,
+            native_build_number: 80000,
+            client_event_source: null,
+            launch_signature: '00000000-0000-0000-0000-000000000000',
+            client_heartbeat_session_id: '00000000-0000-0000-0000-000000000000',
+            client_app_state: 'focused'
+        }));
+    }
+
+    function getDesktopUserAgent() {
+        if (isDesktop) return navigator.userAgent;
+        // Construct plausible Electron UA for web context
+        try {
+            const chromeVersion = navigator.userAgent.match(/Chrome\/(\d+)/)?.[1] || '120';
+            const electronVersion = '42.7.1';
+            const discordVersion = '1.0.9000';
+            return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/${discordVersion} Chrome/${chromeVersion} Electron/${electronVersion} Safari/537.36`;
+        } catch {
+            return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9000 Chrome/120.0.0.0 Electron/42.7.1 Safari/537.36";
+        }
+    }
 
     if (!Q.Quest || !Q.api) { console.log('[!] Discord internals not found. Refresh & try again.'); return; }
 
@@ -27,6 +77,13 @@
         ge() { console.groupEnd() }
     };
 
+    function logPct(item, np) {
+        item.pct = np;
+        if (np === item._lpq) return;
+        item._lpq = np;
+        if (np % 10 === 0 || np === 100) log.i('[ ' + np + '% ] ' + fmtDur(log._el()));
+    }
+
     let originalProps = {
         getRunningGames: Q.Game?.getRunningGames,
         getGameForPID: Q.Game?.getGameForPID,
@@ -34,13 +91,10 @@
     };
 
     let userPremiumType = 0;
+    let ME_ID = null;
+    let userInfo = { avatar: null, name: '', disc: 0, decoSku: null, decoAsset: null };
 
-    function getOrbValue(rewards) {
-        let r = rewards?.[0];
-        if (!r) return 0;
-        if (userPremiumType >= 2 && r.premiumOrbQuantity) return r.premiumOrbQuantity;
-        return r.orbQuantity || r.amount || 0;
-    }
+
 
     async function getUserOrbs() {
         try { let r = await Q.api.get({ url: '/users/@me/virtual-currency/balance' }); return r?.body?.totalBalance || r?.body?.balance || 0; } catch { return 0; }
@@ -48,16 +102,58 @@
 
     let isBrowser = !navigator.userAgent.includes('Electron');
 
-    const TASKS = ['WATCH_VIDEO', 'PLAY_ON_DESKTOP', 'STREAM_ON_DESKTOP', 'PLAY_ACTIVITY', 'WATCH_VIDEO_ON_MOBILE', 'PLAY_ON_XBOX', 'PLAY_ON_PLAYSTATION'];
-    const TASK_NAMES = { WATCH_VIDEO:'Watch Video', WATCH_VIDEO_ON_MOBILE:'Watch Video', PLAY_ON_DESKTOP:'Play Game', STREAM_ON_DESKTOP:'Stream', PLAY_ACTIVITY:'Activity', PLAY_ON_XBOX:'Play Game', PLAY_ON_PLAYSTATION:'Play Game' };
-    const COLORS = { accent: '#545ded', bg: '#313338', panel: '#2b2d31', text: '#dbdee1', muted: '#80848e', border: '#1e1f22', green: '#23a55a', red: '#f23f42', amber: '#f0b232' };
+    const TASKS = ['WATCH_VIDEO', 'PLAY_ON_DESKTOP', 'STREAM_ON_DESKTOP', 'PLAY_ACTIVITY', 'ACHIEVEMENT_IN_ACTIVITY', 'WATCH_VIDEO_ON_MOBILE', 'PLAY_ON_XBOX', 'PLAY_ON_PLAYSTATION'];
+    const TASK_NAMES = { WATCH_VIDEO:'Watch Video', WATCH_VIDEO_ON_MOBILE:'Watch Video', PLAY_ON_DESKTOP:'Play Game', STREAM_ON_DESKTOP:'Stream', PLAY_ACTIVITY:'Activity', ACHIEVEMENT_IN_ACTIVITY:'Achievement', PLAY_ON_XBOX:'Play Game', PLAY_ON_PLAYSTATION:'Play Game' };
+    const isDesktop = navigator.userAgent.includes('Electron');
+    let DESKTOP_SP = getDesktopSuperProperties();
+    let DESKTOP_UA = getDesktopUserAgent();
 
-    let set = { autoEnroll: true, maxRetries: 3 };
+    let set = { autoEnroll: true, maxRetries: 3, autoClaim: false };
+    const ITEM_MAX_RETRIES = 3;
+    function qstore(k, v) {
+        if (v === undefined) {
+            try { if (typeof window !== 'undefined' && window.localStorage) { let x = window.localStorage.getItem(k); if (x != null) return x; } } catch (e) {}
+            return (window.__questkuSettings && window.__questkuSettings[k]) || null;
+        }
+        try { if (typeof window !== 'undefined' && window.localStorage) { window.localStorage.setItem(k, v); return; } } catch (e) {}
+        (window.__questkuSettings = window.__questkuSettings || {})[k] = v;
+    }
+    if (qstore('questku_autoClaim') === '1') set.autoClaim = true;
+    if (qstore('questku_autoEnroll') === '0') set.autoEnroll = false;
     let uiState = { sort: 'suggested', filter: {}, progSort: 'order', progFilter: {} };
-    let sortLabel = { suggested:'Suggested',recent:'Most Recent',expires:'Expiring Soon',started:'Started',reward:'Highest Reward',name:'Alphabetical (A–Z)' };
-    let progSortLabel = { order:'Queue Position', newest:'Newest', oldest:'Oldest', name:'Alphabetical (A–Z)' };
-    let progStatusLabels = { pending:'Pending', running:'Running', done:'Done', failed:'Failed', paused:'Paused', stopped:'Stopped' };
+    let sortLabel = { suggested:'Suggested',recent:'Most Recent',expires:'Expiring Soon',started:'Started',reward:'Highest Reward',name:'Alphabetical (A-Z)' };
+    let progStatusLabels = { pending:'Pending', running:'Running', done:'Done', failed:'Failed', paused:'Paused', stopped:'Stopped', retry:'Retry' };
     let st = { allQuests: [], queue: [], running: false, paused: false, completed: 0, failed: 0, stopped: 0, currentTask: null, _cleanups: [] };
+    const QUEUE_KEY = 'questku_queue';
+    function saveQueue() {
+        try { qstore(QUEUE_KEY, JSON.stringify(st.queue.map(x => ({ id: x.q.id, status: x.status, curr: x.curr, attempts: x.attempts || 0 })))); } catch (e) {}
+    }
+    function loadQueue() {
+        try {
+            let raw = qstore(QUEUE_KEY);
+            if (!raw) return [];
+            let arr = JSON.parse(raw);
+            if (!Array.isArray(arr)) return [];
+            return arr.filter(x => x && x.id && ['pending','running','paused','retry'].includes(x.status));
+        } catch (e) { return []; }
+    }
+    function restoreQueue() {
+        let saved = loadQueue();
+        if (!saved.length || !Q?.Quest?.quests) return;
+        let restored = [];
+        for (let s of saved) {
+            let q = Q.Quest.quests.get(s.id);
+            if (!q) continue;
+            let item = { q, status: s.status === 'running' || s.status === 'retry' ? 'pending' : s.status, pct: 0, curr: s.curr || 0, attempts: s.attempts || 0 };
+            restored.push(item);
+        }
+        if (!restored.length) return;
+        st.queue = restored;
+        st.allQuests.forEach(x => x._sel = false);
+        renderAllQuests();
+        switchTab('prog');
+        if (set.autoEnroll) processQueue();
+    }
     let appCache = {};
     let appFetching = {};
 
@@ -71,77 +167,117 @@
         if (!t) return 999999;
         let target = cfg?.tasks?.[t]?.target || 0;
         if (t === 'WATCH_VIDEO' || t === 'WATCH_VIDEO_ON_MOBILE') return target;
-        if (t === 'PLAY_ACTIVITY') return target;
+        if (t === 'PLAY_ACTIVITY' || t === 'ACHIEVEMENT_IN_ACTIVITY') return target;
         return target * 60;
     }
 
-    async function apiReq(method, url, body) {
-        for (let i = 0; i <= set.maxRetries; i++) {
-            try {
-                let res;
-                if (method === 'GET') {
-                    res = await Q.api.get({ url });
-                } else if (method === 'DEL' || method === 'DELETE') {
-                    res = await Q.api.del({ url });
-                } else {
-                    res = await Q.api.post({ url, body });
-                }
-                if (res.status === 429) {
-                    let w = (res.body?.retry_after || 30) + Math.random() * 5;
-                    log.i('Rate limited — waiting ' + Math.ceil(w) + 's');
-                    await sleepSec(w); continue;
-                }
-                if (res.status >= 400 && res.status < 500) return res;
-                return res;
-            } catch (e) {
-                if (e?.status === 429) {
-                    let w = (e.body?.retry_after || 30) + Math.random() * 5;
-                    log.i('Rate limited — waiting ' + Math.ceil(w) + 's');
-                    await sleepSec(w); continue;
-                }
-                if (i === set.maxRetries) throw e;
-                log.i('Retry ' + (i + 1) + '/' + set.maxRetries);
-                await sleepSec(2 + i * 3);
+    async function fetchPremiumType() {
+        try {
+            let r = await apiReq('GET', '/users/@me');
+            if (r?.body?.premium_type !== undefined) userPremiumType = r.body.premium_type;
+            if (r?.body?.id) ME_ID = r.body.id;
+            userInfo.avatar = r?.body?.avatar || null;
+            userInfo.name = r?.body?.global_name || r?.body?.username || '';
+            userInfo.disc = parseInt(r?.body?.discriminator) || 0;
+            // Decoration: /users/@me reports a default deco on many accounts (false positive),
+            // so read the ACTUALLY applied one from the profile endpoint per account.
+            userInfo.decoSku = null;
+            userInfo.decoAsset = null;
+            if (ME_ID) {
+                try {
+                    let p = await apiReq('GET', '/users/' + ME_ID + '/profile?type=modal');
+                    userInfo.decoSku = p?.body?.user?.avatar_decoration_data?.sku_id || null;
+                    userInfo.decoAsset = p?.body?.user?.avatar_decoration_data?.asset || null;
+                } catch {}
             }
+        } catch {}
+    }
+
+    function updateHero() {
+        let ava = document.querySelector('#questku-panel .qk-hero-ava');
+        let deco = document.querySelector('#questku-panel .qk-hero-deco');
+        let name = document.querySelector('#questku-panel .qk-hero-name');
+        if (!ava || !name || !userInfo.name) return;
+        name.textContent = userInfo.name;
+        let defAva = 'https://cdn.discordapp.com/embed/avatars/' + (userInfo.disc % 5) + '.png';
+        ava.src = userInfo.avatar
+            ? 'https://cdn.discordapp.com/avatars/' + ME_ID + '/' + userInfo.avatar + '.png?size=128'
+            : defAva;
+        ava.onerror = () => { if (userInfo.avatar) { ava.onerror = null; ava.src = defAva; } };
+        ava.style.display = 'block';
+        if (deco) {
+            if (userInfo.decoSku) {
+                // Discord's client loads decorations from the collectibles-shop endpoint
+                // (the claimed decoration art); `a_` asset = animated variant.
+                let kind = (userInfo.decoAsset || '').startsWith('a_') ? 'animated' : 'static';
+                deco.onerror = () => { deco.style.display = 'none'; };
+                deco.src = 'https://cdn.discordapp.com/media/v1/collectibles-shop/' + userInfo.decoSku + '/' + kind;
+                deco.style.display = 'block';
+            } else { deco.style.display = 'none'; }
         }
     }
 
-    async function fetchPremiumType() {
-        try { let r = await apiReq('GET', '/users/@me'); if (r?.body?.premium_type !== undefined) userPremiumType = r.body.premium_type; } catch {}
+    function resyncQueue() {
+        if (!Q?.Quest?.quests?.get || !st?.queue) return;
+        st.queue.forEach(it => {
+            const f = Q.Quest.quests.get(it.q.id);
+            if (f && f !== it.q) it.q = f;
+        });
+    }
+
+function openProfile() {
+        try {
+            const visible = (el) => el && el.offsetParent !== null;
+            let tgt = null;
+            const sels = [
+                'div[role="button"][class*="accountPopoutButton"]',
+                '[class*="accountPopoutButtonWrapper"]',
+                '[aria-label="Account popout"]',
+                '[data-tutorial-id="account"], [data-tutorial="account"]'
+            ];
+            for (const s of sels) {
+                const el = document.querySelector(s);
+                if (visible(el)) { tgt = el; break; }
+            }
+            if (!tgt) {
+                const imgs = Array.prototype.slice.call(document.querySelectorAll('img')).filter(function (i) {
+                    if (!i.src || !ME_ID || i.closest('#questku-panel') || !visible(i)) return false;
+                    if (i.src.indexOf('/avatars/' + ME_ID + '/') < 0) return false;
+                    const r = i.getBoundingClientRect();
+                    return r.left < 90 && r.top > window.innerHeight * 0.55;
+                });
+                if (imgs.length) {
+                    const img = imgs[0];
+                    tgt = img.closest('[role="button"],button') || img;
+                }
+            }
+            if (!tgt) { log.i('Profile: account avatar not found'); return; }
+            const opts = { bubbles: true, cancelable: true, view: window, button: 0 };
+            try {
+                for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+                    tgt.dispatchEvent(new MouseEvent(type, opts));
+                }
+            } catch (e) { tgt.click(); }
+        } catch (e) { log.e('Profile: ' + (e.message || e)); }
     }
 
     async function refreshQuests() {
-        
-        function getAppId(q) {
-            const cfg = q.config.taskConfigV2 ?? q.config.taskConfig;
-            if (!cfg?.tasks) return null;
-            for (const task of Object.values(cfg.tasks)) {
-                if (task.applications?.[0]?.id) return task.applications[0].id;
-            }
-            return q.config.application?.id ?? null;
+        if (st._refreshing) return;
+        st._refreshing = true;
+        try {
+            if (!D) return;
+            st.allQuests = [...Q.Quest.quests.values()].map((q, i) => { q._i = i; q._sel = false; return q; });
+            resyncQueue();
+            let [orb] = await Promise.allSettled([getUserOrbs(), fetchPremiumType()]);
+            if (orb.value != null && D && D.ob) { let n = D.ob.querySelector('.qk-ob-num'); if (n) n.textContent = orb.value; let b = D.ob.querySelector('.qk-ob-bal'); if (b) b.textContent = orb.value; }
+            updateHero();
+            renderAllQuests();
+            updateAddqBtn();
+            fetchAllAppIcons();
+            if (set.autoEnroll && !st.running) autoEnrollAll();
+        } finally {
+            st._refreshing = false;
         }
-        
-        st.allQuests = [...Q.Quest.quests.values()]
-            .filter(x => {
-                const expires = new Date(x.config.expiresAt).getTime() > Date.now();
-                if (!expires) return false;
-                const cfg = x.config.taskConfig ?? x.config.taskConfigV2;
-                const taskKeys = Object.keys(cfg.tasks);
-                if (!taskKeys.length) return false;
-                const t = TASKS.find(y => taskKeys.includes(y));
-                if (!t) return false;
-                if (t === 'PLAY_ON_DESKTOP' || t === 'PLAY_ON_XBOX' || t === 'PLAY_ON_PLAYSTATION' || t === 'STREAM_ON_DESKTOP') {
-                    return !!getAppId(x);
-                }
-                return true;
-            })
-            .map((q, i) => { q._i = i; q._sel = false; return q; });
-        let orb = await getUserOrbs();
-        if (D && D.ob) D.ob.textContent = orb;
-        await fetchPremiumType();
-        renderAllQuests();
-        updateAddqBtn();
-        fetchAllAppIcons();
     }
 
     function getTok() {
@@ -154,11 +290,11 @@
         return null;
     }
 
-    async function directFetch(method, url, body) {
+    async function directFetch(method, url, body, extraHeaders) {
         let tok = getTok();
         if (!tok) return null;
         try {
-            let opts = { method, headers: { authorization: tok, 'content-type': 'application/json' } };
+            let opts = { method, headers: { authorization: tok, 'content-type': 'application/json', ...extraHeaders } };
             if (body !== undefined) opts.body = JSON.stringify(body);
             let r = await window.fetch('https://discord.com' + url, opts);
             let text = await r.text();
@@ -167,8 +303,156 @@
     }
     async function directPost(url, body) { return directFetch('POST', url, body); }
 
+    async function qkFetch(url, opts, ms) {
+        try {
+            let c = new AbortController(); let to = setTimeout(() => c.abort(), ms);
+            let r = await window.fetch(url, Object.assign({ signal: c.signal }, opts));
+            clearTimeout(to); return r;
+        } catch { return null; }
+    }
+    async function qkRelayCheck() {
+        try { let r = await qkFetch('http://127.0.0.1:43210/health', { method: 'GET' }, 2000); return !!(r && r.ok); } catch { return false; }
+    }
+    async function qkRelayPost(url, headers, body) {
+        let r = await qkFetch('http://127.0.0.1:43210/proxy', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url, headers, body }) }, 25000);
+        if (!r) return null;
+        try { return await r.json(); } catch { return null; }
+    }
+    async function qkDsDirect(url, headers, body) {
+        try {
+            let r = await window.fetch(url, { method: 'POST', headers: Object.assign({ 'content-type': 'application/json' }, headers), body: JSON.stringify(body), redirect: 'error' });
+            return { ok: r.ok, status: r.status, body: await r.text() };
+        } catch (e) { return { ok: false, status: 0, body: String(e.message || e) }; }
+    }
+    function qkExtHandshake(detail) {
+        return new Promise(resolve => {
+            const id = 'qk' + Math.random().toString(36).slice(2);
+            let done = false;
+            const to = setTimeout(() => { done = true; window.removeEventListener('qk-ds-res', onRes); resolve(null); }, 1500);
+            function onRes(e) {
+                if (done || !e.detail || e.detail.id !== id) return;
+                done = true; clearTimeout(to); window.removeEventListener('qk-ds-res', onRes); resolve(e.detail);
+            }
+            window.addEventListener('qk-ds-res', onRes);
+            try { window.dispatchEvent(new CustomEvent('qk-ds', { detail: Object.assign({ id }, detail) })); }
+            catch { done = true; clearTimeout(to); window.removeEventListener('qk-ds-res', onRes); resolve(null); }
+        });
+    }
+    let qkExtLive = null;
+    async function qkExtProbe() {
+        if (qkExtLive !== null) return qkExtLive;
+        let r = await qkExtHandshake({ type: 'ping' });
+        qkExtLive = !!(r && r.pong);
+        return qkExtLive;
+    }
+    async function qkExtPost(url, headers, body) {
+        let u; try { u = new URL(url); } catch { return null; }
+        let h = await qkExtHandshake({
+            type: 'qkDs',
+            appId: u.hostname.split('.')[0],
+            questId: headers['X-Discord-Quest-ID'] || '',
+            referrer: headers.Referer || '',
+            token: headers['X-Auth-Token'] || '',
+            path: u.pathname,
+            body
+        });
+        return (h && h.result) || null;
+    }
+    async function bypassAchievement(q, appIdStr, target) {
+        const questId = q.id;
+        let pre = new Set();
+        try {
+            let b = await directFetch('GET', '/oauth2/tokens');
+            if (!b || b.status >= 400) b = await apiReq('GET', '/oauth2/tokens');
+            let list = b?.body; list = Array.isArray(list) ? list : (list?.tokens || []);
+            list.forEach(tk => { if (String(tk.application?.id) === appIdStr) pre.add(tk.id); });
+        } catch (e) { log.e('ACHIEVEMENT: token snapshot failed - abort before authorize.'); return false; }
+        try {
+            let scope = encodeURIComponent('identify applications.commands applications.entitlements');
+            let authUrl = '/oauth2/authorize?response_type=code&client_id=' + appIdStr + '&scope=' + scope;
+            let a = await directFetch('POST', authUrl, { permissions: '0', authorize: true, integration_type: 1, location_context: { guild_id: '10000', channel_id: '10000', channel_type: 10000 } });
+            if (!a || a.status >= 400) a = await apiReq('POST', authUrl, { permissions: '0', authorize: true, integration_type: 1, location_context: { guild_id: '10000', channel_id: '10000', channel_type: 10000 } });
+            let loc = a?.body?.location || ''; let code = '';
+            try { code = new URL(loc).searchParams.get('code') || ''; } catch {}
+            if (!code) { log.e('ACHIEVEMENT: no auth code' + (loc ? ' (' + loc.slice(0, 120) + ')' : '')); return false; }
+            let pt = await directFetch('POST', '/applications/' + appIdStr + '/proxy-tickets', {});
+            if (!pt || pt.status >= 400) pt = await apiReq('POST', '/applications/' + appIdStr + '/proxy-tickets', {});
+            let ticket = pt?.body?.ticket;
+            if (!ticket) { log.e('ACHIEVEMENT: no proxy ticket (HTTP ' + pt?.status + ' code ' + pt?.body?.code + ')'); return false; }
+            let referrer = 'https://' + appIdStr + '.discordsays.com/?instance_id=example-cl-instance&platform=desktop&discord_proxy_ticket=' + encodeURIComponent(ticket);
+            let send = null;
+            if (await qkRelayCheck()) send = qkRelayPost;
+            else if (isBrowser && await qkExtProbe()) send = qkExtPost;
+            else if (isBrowser) send = qkDsDirect;
+            if (!send) { log.e('ACHIEVEMENT: relay not running. Desktop: double-click relay\\start-relay.cmd. Web: without relay, extension bridge used (browser strips Referer, may fail 500).'); return false; }
+            let base = { 'X-Discord-Quest-ID': questId, Referer: referrer };
+            let ds = await send('https://' + appIdStr + '.discordsays.com/.proxy/acf/authorize', Object.assign({ 'X-Auth-Token': '' }, base), { code });
+            if (!ds || !ds.ok) { log.e('ACHIEVEMENT: discordsays authorize ' + (ds?.status || '?') + ' ' + String(ds?.body || '').slice(0, 160)); if (send === qkExtPost) log.e('Hint: browser SW strips Referer - run relay\\start-relay.cmd for authorize to work.'); return false; }
+            let dsToken = ''; try { dsToken = (JSON.parse(ds.body) || {}).token || ''; } catch {}
+            if (!dsToken) { log.e('ACHIEVEMENT: no discordsays token.'); return false; }
+            let pg = await send('https://' + appIdStr + '.discordsays.com/.proxy/acf/quest/progress', Object.assign({ 'X-Auth-Token': dsToken }, base), { progress: target });
+            if (!pg || !pg.ok) { log.e('ACHIEVEMENT: discordsays progress ' + (pg?.status || '?') + ' ' + String(pg?.body || '').slice(0, 160)); return false; }
+            log.ok('ACHIEVEMENT completed via bypass: ' + q.config.messages.questName);
+            return true;
+        } catch (e) {
+            log.e('ACHIEVEMENT bypass error: ' + (e?.message || e));
+            if (e?.body?.code === 50165) log.e('Activity age-gated or delisted (50165).');
+            return false;
+        } finally {
+            try {
+                let af = await directFetch('GET', '/oauth2/tokens');
+                if (!af || af.status >= 400) af = await apiReq('GET', '/oauth2/tokens');
+                let list = af?.body; list = Array.isArray(list) ? list : (list?.tokens || []);
+                for (const tk of list) {
+                    if (String(tk.application?.id) === appIdStr && !pre.has(tk.id)) {
+                        let d = await directFetch('DELETE', '/oauth2/tokens/' + tk.id);
+                        if (!d || d.status >= 400) await apiReq('DEL', '/oauth2/tokens/' + tk.id);
+                    }
+                }
+            } catch {}
+        }
+    }
+
+    function enrollmentBlocked() {
+        try {
+            let n = Date.now();
+            let raw = null;
+            for (const src of [Q.Quest, Q.Quest?.store, typeof Q.Quest?.getState === 'function' ? Q.Quest.getState() : null]) {
+                if (src && (src.quest_enrollment_blocked_until !== undefined || src['questEnrollmentBlockedUntil'] !== undefined)) { raw = src.quest_enrollment_blocked_until !== undefined ? src.quest_enrollment_blocked_until : src['questEnrollmentBlockedUntil']; break; }
+            }
+            if (raw == null) return null;
+            let ts = typeof raw === 'number' ? raw : new Date(raw).getTime();
+            if (raw && !isNaN(ts) && ts > n) return new Date(ts);
+        } catch {}
+        return null;
+    }
+
+    async function autoEnrollAll() {
+        if (st._autoEnrolling || st.running) return;
+        st._autoEnrolling = true;
+        try {
+            if (enrollmentBlocked()) { log.i('Auto-enroll: enrollment blocked by Discord - skip.'); return; }
+            let now = Date.now();
+            let cands = st.allQuests.filter(x => {
+                let cfg = x.config.taskConfig ?? x.config.taskConfigV2;
+                let hasTask = TASKS.some(y => cfg?.tasks?.[y] != null);
+                return !isExpired(x, now) && hasTask && !x.userStatus?.completedAt && !x.userStatus?.enrolledAt && !qActive(x);
+            });
+            if (!cands.length) return;
+            let n = 0;
+            for (const q of cands) {
+                if (st.running || st._autoEnrollAbort) break;
+                if (enrollmentBlocked()) { log.e('Enrollment blocked - stop auto-enroll.'); break; }
+                let r = await enrollQuest(q);
+                if (r.ok) n++;
+                await sleep(350);
+            }
+            if (n) { renderAllQuests(); updateAddqBtn(); }
+        } finally { st._autoEnrollAbort = false; st._autoEnrolling = false; }
+    }
+
     async function enrollQuest(q) {
-        if (q._enrolling) return true;
+        if (q._enrolling) return { ok: true, permanent: false };
         q._enrolling = true;
         try {
             let res = await directPost('/quests/' + q.id + '/enroll', {
@@ -193,20 +477,43 @@
             } else {
                 log.e('Enroll failed: ' + q.config.messages.questName + ' (Code: ' + res?.body?.code + ')');
             }
-            return ok;
+            return { ok, permanent: res ? res.status >= 400 && res.status < 500 : false };
         } catch (e) {
             log.e('Enroll failed: ' + q.config.messages.questName + ' (Exception: ' + e.message + ')');
-            return false;
+            return { ok: false, permanent: false };
         }
         finally { delete q._enrolling; }
     }
 
-    let D = null;
+let D = null;
+    let refreshTimer = null;
+    let zWatch = null;
+
+    function syncPanelZ() {
+        const p = document.getElementById('questku-panel');
+        if (!p) return;
+        let hasDialog = false;
+        try {
+            const app = document.querySelector('#app-mount');
+            if (app) {
+                const dialogs = app.querySelectorAll('[role="dialog"]');
+                for (let i = 0; i < dialogs.length; i++) {
+                    const d = dialogs[i];
+                    if (d.getAttribute('aria-hidden') === 'true') continue;
+                    if (d.offsetParent !== null || d.getClientRects().length) { hasDialog = true; break; }
+                }
+            }
+        } catch (e) {}
+        p.style.zIndex = hasDialog ? '1' : '999999';
+    }
 
     window.questkuKill = function() {
         if (!st) return;
+        if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+        if (zWatch) { clearInterval(zWatch); zWatch = null; }
         st.running = false;
         st.paused = false;
+        st._autoEnrollAbort = true;
         if (st._cleanups) {
             st._cleanups.forEach(fn => { try { fn(); } catch {} });
             st._cleanups = [];
@@ -226,6 +533,7 @@
             st.completed = 0;
             st.failed = 0;
             st.currentTask = null;
+            saveQueue();
             if (st.allQuests) st.allQuests.forEach(q => q._sel = false);
         }
         if (D) {
@@ -234,6 +542,7 @@
         }
         let styleEl = document.getElementById('questku-style');
         if (styleEl) styleEl.remove();
+        document.querySelectorAll('.qk-hov-tip').forEach(el => el.remove());
         D = null;
     };
 
@@ -381,23 +690,53 @@
         let c = document.createElement('style');
         c.id = 'questku-style';
         c.textContent = `
-#questku-panel{all:initial;font:12.5px/1.5 Whitney,'Helvetica Neue',Helvetica,Arial,sans-serif;position:fixed;bottom:24px;right:24px;z-index:999999;background:rgba(10,11,13,.7);color:#e8eaed;border:1px solid rgba(255,255,255,.05);border-radius:16px;width:400px;box-shadow:0 24px 80px rgba(0,0,0,.5);user-select:none;overflow:clip;animation:qkIn .3s ease-out;-webkit-backdrop-filter:blur(24px);backdrop-filter:blur(24px)}
+#questku-panel{all:initial;font:12.5px/1.5 Whitney,'Helvetica Neue',Helvetica,Arial,sans-serif;position:fixed;bottom:24px;right:24px;z-index:999999;background:rgba(10,11,13,.6);color:#e8eaed;border:1px solid rgba(255,255,255,.05);border-radius:16px;width:400px;box-shadow:0 24px 80px rgba(0,0,0,.5);user-select:none;overflow:clip;animation:qkIn .3s ease-out;-webkit-backdrop-filter:blur(28px) saturate(160%);backdrop-filter:blur(28px) saturate(160%)}
 @keyframes qkIn{0%{opacity:0;transform:translateY(12px) scale(.97)}100%{opacity:1;transform:translateY(0) scale(1)}}
 #questku-panel *{box-sizing:border-box;margin:0;padding:0}
 #questku-panel .qk-h{display:flex;align-items:center;gap:8px;padding:14px 12px 10px 16px;border-bottom:1px solid rgba(255,255,255,.05);cursor:move}
 #questku-panel .qk-h .qk-l{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;color:#f2f3f5}
+#questku-panel .qk-hero-slot{height:30px;max-width:150px;overflow:hidden;display:flex;align-items:center;flex:0 0 auto}
+#questku-panel .qk-hero-strip{display:flex;flex-direction:column;gap:12px;animation:qkHero 11.8s cubic-bezier(.4,0,.2,1) infinite}
+@keyframes qkHero{0%,42.3%{transform:translateY(0)}50%,92.3%{transform:translateY(-42px)}100%{transform:translateY(0)}}
+#questku-panel .qk-hero-cell{height:30px;display:flex;align-items:center;gap:8px;white-space:nowrap;flex-shrink:0;overflow:hidden}
+#questku-panel .qk-hero-brand-img{width:24px;height:24px;border-radius:6px;display:block}
+#questku-panel .qk-hero-ava-w{position:relative;width:30px;height:30px;flex:0 0 auto}
+#questku-panel .qk-hero-ava{width:30px;height:30px;border-radius:50%;display:block}
+#questku-panel .qk-hero-deco{position:absolute;inset:-3px;width:36px;height:36px;pointer-events:none}
+#questku-panel .qk-hero-name{font-size:14px;font-weight:600;color:#f2f3f5;max-width:110px;overflow:hidden;text-overflow:ellipsis}
+    #questku-panel .qk-hero-user{cursor:pointer;position:relative}
+    .qk-hov-tip{display:none;position:fixed;transform:translateX(-50%);z-index:2147483000;padding:6px 10px;background:rgba(15,17,20,.7);border:1px solid rgba(255,255,255,.12);border-radius:8px;font-size:11px;color:rgba(255,255,255,.85);box-shadow:0 8px 24px rgba(0,0,0,.4);white-space:nowrap;pointer-events:none;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+@media (prefers-reduced-motion: reduce){#questku-panel .qk-hero-strip{animation:none}}
 #questku-panel .qk-h .qk-l svg{flex-shrink:0;display:block}
 #questku-panel .qk-h .qk-l .qk-wm{display:inline-flex;gap:0;align-items:baseline}
-#questku-panel .qk-h .qk-ob{font-size:10px;padding:2px 7px;border-radius:10px;background:rgba(255,255,255,.05);color:rgba(255,255,255,.45);font-weight:500;margin-left:4px}
-#questku-panel .qk-h .qk-nav{margin-left:auto;position:relative;padding:6px 0 0;overflow:clip}
+#questku-panel .qk-h .qk-ob{font-size:10px;padding:2px 7px;border-radius:10px;background:rgba(255,255,255,.05);color:rgba(255,255,255,.45);font-weight:500;margin-left:4px;position:relative;cursor:pointer}
+    .qk-hov-tip{display:none;position:fixed;transform:translateX(-50%);z-index:2147483000;padding:6px 10px;background:rgba(15,17,20,.7);border:1px solid rgba(255,255,255,.12);border-radius:8px;font-size:11px;color:rgba(255,255,255,.85);box-shadow:0 8px 24px rgba(0,0,0,.4);white-space:nowrap;pointer-events:none;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+#questku-panel .qk-ob-tip{display:none;position:absolute;top:calc(100% + 10px);left:50%;transform:translateX(-50%);z-index:300;width:220px;background:rgba(15,17,20,.55);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:14px 14px 12px;box-shadow:0 12px 40px rgba(0,0,0,.4);-webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%);text-align:center;cursor:default;overflow:hidden}
+#questku-panel .qk-ob-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:12px;opacity:0;transition:opacity .5s ease;pointer-events:none}
+#questku-panel .qk-ob-tip.qk-night .qk-ob-bg{opacity:1}
+#questku-panel .qk-ob-tip :not(.qk-ob-bg):not(.qk-ob-x){position:relative;z-index:1}
+#questku-panel .qk-h .qk-ob.open .qk-ob-tip{display:block}
+#questku-panel .qk-ob-tip .qk-ob-x{position:absolute;top:14px;right:14px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:rgba(255,255,255,.55);border-radius:8px;cursor:pointer}
+#questku-panel .qk-ob-tip .qk-ob-x:hover{background:rgba(255,255,255,.12);color:#fff}
+#questku-panel .qk-orb-card{display:block}
+#questku-panel .qk-ob-vid{width:88px;height:88px;border-radius:50%;object-fit:cover;display:block;margin:0 auto 12px}
+#questku-panel .qk-ob-bal{font-size:26px;font-weight:800;line-height:1;color:#f2f3f5}
+#questku-panel .qk-ob-tip-label{font-size:11px;color:rgba(255,255,255,.45);margin:4px 0 12px}
+#questku-panel .qk-ob-shop{display:block;text-align:center;padding:8px;border-radius:8px;background:#5865F2;color:#fff;font-size:12px;font-weight:600;text-decoration:none}
+#questku-panel .qk-ob-shop:hover{background:#4752c4}
+#questku-panel .qk-ob-learn{font-size:11px;color:rgba(255,255,255,.45);margin-top:10px;text-decoration:none;display:block}
+#questku-panel .qk-ob-learn:hover{color:#fff}
+#questku-panel .qk-h .qk-nav{margin-left:auto;position:relative;padding:6px 0 0;overflow:hidden;flex:1 1 auto;min-width:32px}
 #questku-panel .qk-h .qk-nav-scroll{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;-ms-overflow-style:none;padding:0 2px}
 #questku-panel .qk-h .qk-nav-scroll::-webkit-scrollbar{display:none}
-#questku-panel .qk-h .qk-nav .qk-nav-tab{border:0;background:0;color:rgba(255,255,255,.35);font-size:11.5px;font-weight:400;cursor:pointer;transition:color .2s cubic-bezier(.4,0,.2,1);font-family:inherit;letter-spacing:.1px;padding:2px 2px 8px;scroll-snap-align:start;flex-shrink:0;line-height:1}
+#questku-panel .qk-h .qk-nav .qk-nav-tab{border:0;background:0;color:rgba(255,255,255,.35);font-size:11.5px;font-weight:400;cursor:pointer;transition:color .2s cubic-bezier(.4,0,.2,1),opacity .2s cubic-bezier(.4,0,.2,1),transform .2s cubic-bezier(.4,0,.2,1);font-family:inherit;letter-spacing:.1px;padding:2px 2px 8px;scroll-snap-align:start;flex-shrink:0;line-height:1}
 #questku-panel .qk-h .qk-nav .qk-nav-tab:hover{color:rgba(255,255,255,.75)}
-#questku-panel .qk-h .qk-nav .qk-nav-tab.act{color:#f2f3f5}
+#questku-panel .qk-h .qk-nav .qk-nav-tab:not(.act){opacity:.5;transform:scale(.92)}
+#questku-panel .qk-h .qk-nav .qk-nav-tab.act{color:#f2f3f5;opacity:1;transform:scale(1)}
 #questku-panel .qk-h .qk-nav-indicator{position:absolute;bottom:0;left:0;height:2px;background:#545ded;border-radius:2px;opacity:1;transition:left .2s cubic-bezier(.4,0,.2,1),width .2s cubic-bezier(.4,0,.2,1);pointer-events:none}
-#questku-panel .qk-h .qk-hbtn{border:0;background:0;color:rgba(255,255,255,.2);font-size:16px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:6px;cursor:pointer;transition:all .12s;font-family:inherit}
+#questku-panel .qk-h .qk-hbtn{border:0;background:0;color:rgba(255,255,255,.2);font-size:16px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:6px;cursor:pointer;transition:all .12s;font-family:inherit;flex-shrink:0}
 #questku-panel .qk-h .qk-hbtn:hover{background:rgba(255,255,255,.08);color:#e8eaed}
+#questku-panel .qk-h .qk-hbtn.arm{color:#f23f42;background:rgba(242,63,66,.12)}
 #questku-panel .qk-body{display:none}
 #questku-panel .qk-body.act{display:block;width:100%;left:0}
 #questku-panel .hs-c{display:flex;gap:6px;padding:12px 12px 8px}
@@ -428,14 +767,16 @@
 #questku-panel .qk-bb:hover{color:rgba(255,255,255,.8);background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.1)}
 #questku-panel .qk-bb:active{color:#fff;background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.2);transform:scale(.97)}
 #questku-panel .qk-bb:focus{outline:0}
+#questku-panel .qk-bb.qkr{opacity:.35;transform:rotate(16deg);pointer-events:none}
 #qk-sel-toggle,#qk-prog-sel-toggle{min-width:100px}
 #qk-sort-btn,#qk-prog-sort-btn{min-width:135px}
 #questku-panel .qk-bb.act,#questku-panel .qk-bb.act:hover,#questku-panel .qk-bb.act:active{color:#fff;background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.18);font-weight:600;transform:none;box-shadow:0 1px 2px rgba(0,0,0,.08),inset 0 1px 0 rgba(255,255,255,.06)}
 #questku-panel .qk-bb:disabled{opacity:.35;cursor:not-allowed;box-shadow:none}
 #questku-panel .qk-tl-dd{position:relative}
-#questku-panel .qk-tl-pop{opacity:0;visibility:hidden;transform:scale(.95) translateY(-4px);position:absolute;top:calc(100% + 4px);left:0;z-index:100;min-width:185px;max-height:320px;overflow-y:auto;background:linear-gradient(135deg,rgba(16,17,20,.96),rgba(84,93,237,.045));border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:4px;box-shadow:0 8px 24px rgba(0,0,0,.4);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);transition:opacity .15s ease,transform .15s ease,visibility .15s ease}
+#questku-panel .qk-tl-pop{opacity:0;visibility:hidden;transform:scale(.95) translateY(-4px);position:absolute;top:calc(100% + 4px);left:0;z-index:100;min-width:185px;max-height:320px;overflow-y:auto;background:rgba(15,17,20,.55);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:4px;box-shadow:0 8px 24px rgba(0,0,0,.4);-webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%);transition:opacity .15s ease,transform .15s ease,visibility .15s ease}
 #questku-panel .qk-tl-pop.open{opacity:1;visibility:visible;transform:scale(1) translateY(0)}
 #questku-panel #qk-filter-pop{right:0;left:auto}
+#questku-panel #qk-settings-pop{right:0;left:auto;min-width:150px;width:max-content;overflow:visible}
 #questku-panel .qk-tl-pop .qk-tl-opt{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px;color:rgba(255,255,255,.5);transition:all .12s ease;font-family:inherit;border:0;background:0;width:100%;text-align:left;white-space:nowrap}
 #questku-panel .qk-tl-pop .qk-tl-opt:hover{background:rgba(255,255,255,.08);color:rgba(255,255,255,.8)}
 #questku-panel .qk-tl-pop .qk-tl-opt.act{color:#fff;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15)}
@@ -448,6 +789,11 @@
 #questku-panel .qk-tl-pop .qk-tl-hd{padding:5px 10px 2px;font-size:9px;color:rgba(255,255,255,.2);text-transform:uppercase;letter-spacing:.6px;font-weight:600}
 #questku-panel .qk-tl-pop .qk-tl-div{height:1px;background:rgba(255,255,255,.04);margin:3px 8px}
 #questku-panel .qk-prog-active{font-size:11px;color:rgba(255,255,255,.35);font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap}
+#questku-panel #qk-settings{transition:transform .12s ease}
+#questku-panel #qk-settings.open{transform:rotate(90deg)}
+#questku-panel .qk-tl-opt{position:relative}
+#questku-panel .qk-tl-opt .qk-tip{display:none;position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);z-index:300;min-width:180px;max-width:230px;padding:6px 10px;background:rgba(15,17,20,.7);border:1px solid rgba(255,255,255,.12);border-radius:8px;font-size:11px;line-height:1.4;color:rgba(255,255,255,.85);box-shadow:0 8px 24px rgba(0,0,0,.4);text-align:center;white-space:normal;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+#questku-panel .qk-tl-opt:hover .qk-tip{display:block}
 #questku-panel .qk-nitro-badge{height:22px;vertical-align:middle;margin-left:6px}
 #questku-panel .qk-rw{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
 #questku-panel .qk-rw-item{display:inline-flex;align-items:center;gap:4px}
@@ -458,11 +804,16 @@
 #questku-panel .qk-tl-pop .qk-tl-clr:disabled{opacity:.3;cursor:not-allowed;pointer-events:none}
 #questku-panel .qk-tl-pop .qk-tl-clr:active{background:rgba(255,255,255,.1)}
 #questku-panel .qk-list{height:300px;overflow-y:auto;padding:4px 8px}
+    #questku-panel .qk-body#qk-b-quests{position:relative}
+    @keyframes qkBackBob{0%,100%{transform:translate(-50%,0)}50%{transform:translate(-50%,-6px)}}
+    #questku-panel .qk-back{display:none;position:absolute;bottom:46px;left:50%;z-index:60;width:34px;height:34px;border-radius:50%;border:1px solid rgba(255,255,255,.14);background:rgba(15,17,20,.72);color:rgba(255,255,255,.9);cursor:pointer;align-items:center;justify-content:center;box-shadow:0 8px 24px rgba(0,0,0,.4);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);padding:0}
+    #questku-panel .qk-back:hover{color:#fff;background:rgba(24,27,31,.85)}
+    #questku-panel .qk-back.show{display:flex;animation:qkBackBob 2.2s ease-in-out infinite}
 #questku-panel .qk-list::-webkit-scrollbar{width:4px}
 #questku-panel .qk-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:2px}
 #questku-panel .qk-tl-pop::-webkit-scrollbar{width:4px}
 #questku-panel .qk-tl-pop::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:2px}
-#questku-panel .qk-cd{margin:6px 0;border-radius:14px;overflow:hidden;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.06);box-shadow:0 2px 8px rgba(0,0,0,.16),0 8px 32px rgba(0,0,0,.1),inset 0 1px 0 rgba(255,255,255,.05);transition:all .2s;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+#questku-panel .qk-cd{margin:6px 0;border-radius:14px;overflow:hidden;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);box-shadow:0 2px 8px rgba(0,0,0,.16),0 8px 32px rgba(0,0,0,.1),inset 0 1px 0 rgba(255,255,255,.06);transition:all .2s;-webkit-backdrop-filter:blur(18px) saturate(150%);backdrop-filter:blur(14px) saturate(150%);content-visibility:auto;contain-intrinsic-size:auto 210px}
 #questku-panel .qk-cd:hover{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.09);box-shadow:0 2px 8px rgba(0,0,0,.2),0 12px 40px rgba(0,0,0,.14),inset 0 1px 0 rgba(255,255,255,.06)}
 #questku-panel .qk-cd.sel{box-shadow:0 2px 8px rgba(0,0,0,.22),0 8px 32px rgba(0,0,0,.16),inset 0 1px 0 rgba(255,255,255,.05)}
 #questku-panel .qk-ban-wrap{position:relative;border-radius:14px 14px 0 0;overflow:hidden;aspect-ratio:16/4.5;isolation:isolate}
@@ -474,9 +825,13 @@
 #questku-panel .qk-game-logo{height:26px;width:auto;max-width:120px;object-fit:contain;object-position:left center;display:block}
 #questku-panel .qk-promoted{font-size:9.5px;color:rgba(255,255,255,.35);line-height:1;white-space:nowrap;font-weight:400}
 #questku-panel .qk-promoted strong{font-weight:600;color:rgba(255,255,255,.55)}
+#questku-panel .qk-desk-overlay{position:absolute;inset:0;z-index:3;display:flex;align-items:center;justify-content:center;background:rgba(10,11,13,.85);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);pointer-events:auto}
+#questku-panel .qk-desk-hint{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border-radius:99px;font-size:12.5px;font-weight:600;color:#c2c7cd;text-decoration:none;border:1px solid rgba(255,255,255,.08);background:rgba(15,15,17,.55);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);transition:color .18s,border-color .18s,background .18s}
+    #questku-panel .qk-desk-hint svg{flex:0 0 auto;color:#b5bac1}
+    #questku-panel .qk-desk-hint:hover{color:#e8eaed;border-color:rgba(255,255,255,.18);background:rgba(20,20,22,.7)}
 #questku-panel .qk-bd{padding:12px 16px 14px}
 #questku-panel .qk-top{display:flex;align-items:center;gap:16px;cursor:pointer}
-#questku-panel .qk-top .qk-ico{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;flex-shrink:0;background:rgba(255,255,255,.04);border:2px solid rgba(255,255,255,.1);color:rgba(255,255,255,.5);overflow:hidden}
+#questku-panel .qk-top .qk-ico{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;flex-shrink:0;background:none;border:none;color:rgba(255,255,255,.5);overflow:hidden}
 #questku-panel .qk-top .qk-ico img,#questku-panel .qk-top .qk-ico video{width:100%;height:100%;object-fit:cover;display:block}
 #questku-panel .qk-top .qk-ico.done{color:#23a55a;background:rgba(35,165,90,.08);border-color:rgba(35,165,90,.15)}
 #questku-panel .qk-top .qk-ico.fail{color:#f23f42;background:rgba(242,63,66,.08);border-color:rgba(242,63,66,.15)}
@@ -484,9 +839,9 @@
 #questku-panel .qk-top .qk-if .qk-nm{font-size:11px;color:#545ded;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;line-height:1.3;letter-spacing:.4px;text-transform:uppercase}
 #questku-panel .qk-top .qk-if .qk-rw{font-size:16px;color:#f2f3f5;font-weight:700;line-height:1.2;margin-top:2px;display:flex;flex-wrap:wrap;align-items:center;gap:4px}
 #questku-panel .qk-top .qk-if .qk-sb{font-size:11px;color:rgba(255,255,255,.3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:opacity .18s cubic-bezier(.4,0,.2,1),transform .18s cubic-bezier(.4,0,.2,1)}
-#questku-panel .qk-cd[data-qidx] .qk-sb{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;max-height:30px;overflow:hidden;transition:opacity .18s cubic-bezier(.4,0,.2,1),transform .18s cubic-bezier(.4,0,.2,1),max-height .18s ease,margin-top .18s ease}
-#questku-panel .qk-cd[data-qidx]:hover .qk-sb{opacity:0;transform:translateY(-4px);max-height:0;margin-top:0}
-#questku-panel .qk-hp{position:relative;left:auto;right:auto;top:auto;display:flex;flex-direction:column;gap:5px;pointer-events:none;opacity:0;transform:translateY(4px);transition:opacity .18s cubic-bezier(.4,0,.2,1),transform .18s cubic-bezier(.4,0,.2,1);margin-top:8px}
+#questku-panel .qk-cd[data-qidx] .qk-sb{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;max-height:30px;overflow:hidden;transition:opacity .18s cubic-bezier(.4,0,.2,1)}
+#questku-panel .qk-cd[data-qidx]:hover .qk-sb{opacity:0}
+#questku-panel .qk-hp{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;gap:5px;pointer-events:none;opacity:0;transform:translateY(4px);transition:opacity .18s cubic-bezier(.4,0,.2,1),transform .18s cubic-bezier(.4,0,.2,1)}
 #questku-panel .qk-cd[data-qidx]:hover .qk-hp{opacity:1;transform:translateY(0)}
 #questku-panel .qk-hp-txt{font-size:11px;color:rgba(255,255,255,.6);font-weight:500;white-space:nowrap;line-height:1}
 #questku-panel .qk-hp-bar{height:3px;width:100%;background:rgba(255,255,255,.04);border-radius:999px;overflow:hidden}
@@ -496,6 +851,7 @@
 #questku-panel .qk-if{position:relative}
 #questku-panel .qk-top .qk-tg{font-size:10.5px;padding:3px 10px;border-radius:100px;font-weight:600;white-space:nowrap;flex-shrink:0;background:rgba(255,255,255,.04);color:rgba(255,255,255,.35)}
 #questku-panel .qk-top .qk-tg.dn{background:rgba(35,165,90,.12);color:#23a55a}
+#questku-panel .qk-top .qk-tg.brn{background:rgba(120,75,35,.16);color:#8f6238}
 #questku-panel .qk-top .qk-tg.uc{background:rgba(240,139,90,.12);color:#f0895a}
 #questku-panel .qk-top .qk-tg.en{background:rgba(84,93,237,.12);color:#545ded}
 #questku-panel .qk-top .qk-tg.fl{background:rgba(242,63,66,.12);color:#f23f42}
@@ -539,17 +895,18 @@
         let p = document.createElement('div');
         p.id = 'questku-panel';
         p.innerHTML =
-            '<div class="qk-h"><div class="qk-l"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAydpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDkuMS1jMDAzIDc5Ljk2OTBhODdmYywgMjAyNS8wMy8wNi0yMDo1MDoxNiAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvIiB4bWxuczp4bXBNTT0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL21tLyIgeG1sbnM6c3RSZWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZVJlZiMiIHhtcDpDcmVhdG9yVG9vbD0iQWRvYmUgUGhvdG9zaG9wIDI2LjExIChXaW5kb3dzKSIgeG1wTU06SW5zdGFuY2VJRD0ieG1wLmlpZDoxNjFEODFGNTdGRjYxMUYxOEIwNEI3NDExMkEzM0Y1QSIgeG1wTU06RG9jdW1lbnRJRD0ieG1wLmRpZDoxNjFEODFGNjdGRjYxMUYxOEIwNEI3NDExMkEzM0Y1QSI+IDx4bXBNTTpEZXJpdmVkRnJvbSBzdFJlZjppbnN0YW5jZUlEPSJ4bXAuaWlkOjE2MUQ4MUYzN0ZGNjExRjE4QjA0Qjc0MTEyQTMzRjVBIiBzdFJlZjpkb2N1bWVudElEPSJ4bXAuZGlkOjE2MUQ4MUY0N0ZGNjExRjE4QjA0Qjc0MTEyQTMzRjVBIi8+IDwvcmRmOkRlc2NyaXB0aW9uPiA8L3JkZjpSREY+IDwveDp4bXBtZXRhPiA8P3hwYWNrZXQgZW5kPSJyIj8+o5PnZAAAEO9JREFUeNp8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" style="width:24px;height:24px;border-radius:6px;display:block"><span class="qk-wm">Quest<span>ku</span></span><span class="qk-ob" id="qk-ob">0</span></div>' +
+            '<div class="qk-h"><div class="qk-l"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAydpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDkuMS1jMDAzIDc5Ljk2OTBhODdmYywgMjAyNS8wMy8wNi0yMDo1MDoxNiAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvIiB4bWxuczp4bXBNTT0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL21tLyIgeG1sbnM6c3RSZWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZVJlZiMiIHhtcDpDcmVhdG9yVG9vbD0iQWRvYmUgUGhvdG9zaG9wIDI2LjExIChXaW5kb3dzKSIgeG1wTU06SW5zdGFuY2VJRD0ieG1wLmlpZDoxNjFEODFGNTdGRjYxMUYxOEIwNEI3NDExMkEzM0Y1QSIgeG1wTU06RG9jdW1lbnRJRD0ieG1wLmRpZDoxNjFEODFGNjdGRjYxMUYxOEIwNEI3NDExMkEzM0Y1QSI+IDx4bXBNTTpEZXJpdmVkRnJvbSBzdFJlZjppbnN0YW5jZUlEPSJ4bXAuaWlkOjE2MUQ4MUYzN0ZGNjExRjE4QjA0Qjc0MTEyQTMzRjVBIiBzdFJlZjpkb2N1bWVudElEPSJ4bXAuZGlkOjE2MUQ4MUY0N0ZGNjExRjE4QjA0Qjc0MTEyQTMzRjVBIi8+IDwvcmRmOkRlc2NyaXB0aW9uPiA8L3JkZjpSREY+IDwveDp4bXBtZXRhPiA8P3hwYWNrZXQgZW5kPSJyIj8+o5PnZAAAEO9JREFUeNp8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" style="width:24px;height:24px;border-radius:6px;display:block"><span class="qk-wm">Quest<span>ku</span></span><span class="qk-ob" id="qk-ob"><span class="qk-ob-num">0</span><span class="qk-ob-tip"><button class="qk-ob-x" id="qk-ob-x"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" role="img"><path fill="currentColor" d="M19.3 20.7a1 1 0 0 0 1.4-1.4L13.42 12l7.3-7.3a1 1 0 0 0-1.42-1.4L12 10.58l-7.3-7.3a1 1 0 0 0-1.4 1.42L10.58 12l-7.3 7.3a1 1 0 1 0 1.42 1.4L12 13.42l7.3 7.3Z"></path></svg></button><video class="qk-ob-bg" muted loop playsinline autoplay src="https://cdn.discordapp.com/assets/content/62447672d679c7ceb5756dc07350a3145081a671a026fe96876d8742b73f3a82.mp4"></video><video class="qk-ob-vid" autoplay muted loop playsinline src="https://cdn.discordapp.com/assets/content/b8fe318002139f2fabd6255aef10a0a625bb10aa9f8394efd6575115c1dca19a.webm"></video><div class="qk-ob-bal">0</div><div class="qk-ob-tip-label">Total balance</div><a class="qk-ob-shop" id="qk-shop" href="#">Open the Shop</a><a class="qk-ob-learn" href="https://support.discord.com">Need help? Learn more</a></span></span></div>' +
             '<div class="qk-nav"><div class="qk-nav-scroll" id="qk-nav-scroll"><button class="qk-nav-tab act" data-t="quests">All Quests</button><button class="qk-nav-tab" data-t="prog">Progress</button><button class="qk-nav-tab" data-t="hs">HypeSquad</button></div><div class="qk-nav-indicator" id="qk-nav-ind"></div></div>' +
             '<button class="qk-hbtn" id="qk-min">-</button><button class="qk-hbtn" id="qk-close">x</button></div>' +
 
             '<div class="qk-body act" id="qk-b-quests">' +
-            '<div class="qk-tl"><div class="qk-tl-left"><button class="qk-bb" id="qk-sel-toggle">Select All</button><div class="qk-tl-dd"><button class="qk-bb" id="qk-sort-btn">Sort &#9660;</button><div class="qk-tl-pop" id="qk-sort-pop"><label class="qk-tl-opt"><input type="radio" name="sort" data-sort="suggested" checked><span class="rb"></span>Suggested</label><label class="qk-tl-opt"><input type="radio" name="sort" data-sort="recent"><span class="rb"></span>Most Recent</label><label class="qk-tl-opt"><input type="radio" name="sort" data-sort="expires"><span class="rb"></span>Expiring Soon</label><label class="qk-tl-opt"><input type="radio" name="sort" data-sort="started"><span class="rb"></span>Started</label><label class="qk-tl-opt"><input type="radio" name="sort" data-sort="reward"><span class="rb"></span>Highest Reward</label><label class="qk-tl-opt"><input type="radio" name="sort" data-sort="name"><span class="rb"></span>Alphabetical (A–Z)</label></div></div><div class="qk-tl-dd"><button class="qk-bb" id="qk-filter-btn">Filter &#9660;</button><div class="qk-tl-pop" id="qk-filter-pop"><div class="qk-tl-hd">Reward</div><label class="qk-tl-opt"><input type="checkbox" data-filter="orb"><span class="cb"></span>Orbs</label><label class="qk-tl-opt"><input type="checkbox" data-filter="avatardeco"><span class="cb"></span>Avatar Decoration</label><label class="qk-tl-opt"><input type="checkbox" data-filter="profileeffect"><span class="cb"></span>Profile Effect</label><label class="qk-tl-opt"><input type="checkbox" data-filter="ingame"><span class="cb"></span>In-Game Rewards</label><div class="qk-tl-div"></div><div class="qk-tl-hd">Quest Type</div><label class="qk-tl-opt"><input type="checkbox" data-filter="play"><span class="cb"></span>Play</label><label class="qk-tl-opt"><input type="checkbox" data-filter="watch"><span class="cb"></span>Watch</label><label class="qk-tl-opt"><input type="checkbox" data-filter="stream"><span class="cb"></span>Stream</label><label class="qk-tl-opt"><input type="checkbox" data-filter="activity"><span class="cb"></span>Activity</label><div class="qk-tl-div"></div><div class="qk-tl-hd">Status</div><label class="qk-tl-opt"><input type="checkbox" data-filter="avail"><span class="cb"></span>Available</label><label class="qk-tl-opt"><input type="checkbox" data-filter="prog"><span class="cb"></span>In Progress</label><label class="qk-tl-opt"><input type="checkbox" data-filter="done"><span class="cb"></span>Completed</label><label class="qk-tl-opt"><input type="checkbox" data-filter="expired"><span class="cb"></span>Expired</label><div class="qk-tl-div"></div><button class="qk-tl-clr" id="qk-filter-clear" disabled>Clear</button></div></div></div><div class="qk-tl-right"><button class="qk-bb" id="qk-refresh">&#x21bb;</button></div></div>' +
+            '<div class="qk-tl"><div class="qk-tl-left"><button class="qk-bb" id="qk-sel-toggle">Select All</button><div class="qk-tl-dd"><button class="qk-bb" id="qk-sort-btn">Sort &#9660;</button><div class="qk-tl-pop" id="qk-sort-pop"><label class="qk-tl-opt"><input type="radio" name="sort" data-sort="suggested" checked><span class="rb"></span>Suggested</label><label class="qk-tl-opt"><input type="radio" name="sort" data-sort="recent"><span class="rb"></span>Most Recent</label><label class="qk-tl-opt"><input type="radio" name="sort" data-sort="expires"><span class="rb"></span>Expiring Soon</label><label class="qk-tl-opt"><input type="radio" name="sort" data-sort="started"><span class="rb"></span>Started</label><label class="qk-tl-opt"><input type="radio" name="sort" data-sort="reward"><span class="rb"></span>Highest Reward</label><label class="qk-tl-opt"><input type="radio" name="sort" data-sort="name"><span class="rb"></span>Alphabetical (A-Z)</label></div></div><div class="qk-tl-dd"><button class="qk-bb" id="qk-filter-btn">Filter &#9660;</button><div class="qk-tl-pop" id="qk-filter-pop"><div class="qk-tl-hd">Reward</div><label class="qk-tl-opt"><input type="checkbox" data-filter="orb"><span class="cb"></span>Orbs</label><label class="qk-tl-opt"><input type="checkbox" data-filter="avatardeco"><span class="cb"></span>Avatar Decoration</label><label class="qk-tl-opt"><input type="checkbox" data-filter="profileeffect"><span class="cb"></span>Profile Effect</label><label class="qk-tl-opt"><input type="checkbox" data-filter="ingame"><span class="cb"></span>In-Game Rewards</label><div class="qk-tl-div"></div><div class="qk-tl-hd">Quest Type</div><label class="qk-tl-opt"><input type="checkbox" data-filter="play"><span class="cb"></span>Play</label><label class="qk-tl-opt"><input type="checkbox" data-filter="watch"><span class="cb"></span>Watch</label><label class="qk-tl-opt"><input type="checkbox" data-filter="stream"><span class="cb"></span>Stream</label><label class="qk-tl-opt"><input type="checkbox" data-filter="activity"><span class="cb"></span>Activity</label><div class="qk-tl-div"></div><div class="qk-tl-hd">Status</div><label class="qk-tl-opt"><input type="checkbox" data-filter="avail"><span class="cb"></span>Available</label><label class="qk-tl-opt"><input type="checkbox" data-filter="prog"><span class="cb"></span>In Progress</label><label class="qk-tl-opt"><input type="checkbox" data-filter="done"><span class="cb"></span>Completed</label><label class="qk-tl-opt"><input type="checkbox" data-filter="expired"><span class="cb"></span>Expired</label><div class="qk-tl-div"></div><button class="qk-tl-clr" id="qk-filter-clear" disabled>Clear</button></div></div></div><div class="qk-tl-right"><button class="qk-bb" id="qk-refresh">&#x21bb;</button></div></div>' +
             '<div class="qk-list" id="qk-ql"></div>' +
+            '<button class="qk-back" id="qk-back" title="Back to top"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 15l-6-6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' +
             '<div class="qk-ft"><button class="qk-btn" id="qk-addq">Start Queue</button></div></div>' +
 
             '<div class="qk-body" id="qk-b-prog">' +
-            '<div class="qk-tl"><div class="qk-tl-left"><button class="qk-bb" id="qk-prog-sel-toggle" disabled>Select All</button><div class="qk-tl-dd"><button class="qk-bb" id="qk-prog-filter-btn">Filter &#9660;</button><div class="qk-tl-pop" id="qk-prog-filter-pop"><div class="qk-tl-hd">Sort By</div><label class="qk-tl-opt"><input type="radio" name="progsort" data-sort="order" checked><span class="rb"></span>Queue Position</label><label class="qk-tl-opt"><input type="radio" name="progsort" data-sort="newest"><span class="rb"></span>Newest</label><label class="qk-tl-opt"><input type="radio" name="progsort" data-sort="oldest"><span class="rb"></span>Oldest</label><label class="qk-tl-opt"><input type="radio" name="progsort" data-sort="name"><span class="rb"></span>Alphabetical (A–Z)</label><div class="qk-tl-div"></div><div class="qk-tl-hd">Status</div><label class="qk-tl-opt"><input type="checkbox" data-progfilter="running"><span class="cb"></span>Running</label><label class="qk-tl-opt"><input type="checkbox" data-progfilter="pending"><span class="cb"></span>Pending</label><label class="qk-tl-opt"><input type="checkbox" data-progfilter="paused"><span class="cb"></span>Paused</label><label class="qk-tl-opt"><input type="checkbox" data-progfilter="done"><span class="cb"></span>Done</label><label class="qk-tl-opt"><input type="checkbox" data-progfilter="failed"><span class="cb"></span>Failed</label><label class="qk-tl-opt"><input type="checkbox" data-progfilter="stopped"><span class="cb"></span>Stopped</label><div class="qk-tl-div"></div><button class="qk-tl-clr" id="qk-prog-filter-clear" disabled>Clear</button></div></div></div><div class="qk-tl-right"><span class="qk-prog-active" id="qk-prog-active">No Active</span><button class="qk-bb" id="qk-kill">Kill</button><button class="qk-bb" id="qk-prog-refresh">&#x21bb;</button></div></div>' +
+            '<div class="qk-tl"><div class="qk-tl-left"><button class="qk-bb" id="qk-prog-sel-toggle" disabled>Select All</button><div class="qk-tl-dd"><button class="qk-bb" id="qk-prog-filter-btn">Filter &#9660;</button><div class="qk-tl-pop" id="qk-prog-filter-pop"><div class="qk-tl-hd">Sort By</div><label class="qk-tl-opt"><input type="radio" name="progsort" data-sort="order" checked><span class="rb"></span>Queue Position</label><label class="qk-tl-opt"><input type="radio" name="progsort" data-sort="newest"><span class="rb"></span>Newest</label><label class="qk-tl-opt"><input type="radio" name="progsort" data-sort="oldest"><span class="rb"></span>Oldest</label><label class="qk-tl-opt"><input type="radio" name="progsort" data-sort="name"><span class="rb"></span>Alphabetical (A-Z)</label><div class="qk-tl-div"></div><div class="qk-tl-hd">Status</div><label class="qk-tl-opt"><input type="checkbox" data-progfilter="running"><span class="cb"></span>Running</label><label class="qk-tl-opt"><input type="checkbox" data-progfilter="pending"><span class="cb"></span>Pending</label><label class="qk-tl-opt"><input type="checkbox" data-progfilter="paused"><span class="cb"></span>Paused</label><label class="qk-tl-opt"><input type="checkbox" data-progfilter="done"><span class="cb"></span>Done</label><label class="qk-tl-opt"><input type="checkbox" data-progfilter="failed"><span class="cb"></span>Failed</label><label class="qk-tl-opt"><input type="checkbox" data-progfilter="stopped"><span class="cb"></span>Stopped</label><div class="qk-tl-div"></div><button class="qk-tl-clr" id="qk-prog-filter-clear" disabled>Clear</button></div></div></div><div class="qk-tl-right"><span class="qk-prog-active" id="qk-prog-active">No Active</span><div class="qk-tl-dd"><button class="qk-bb" id="qk-settings">&#8942;</button><div class="qk-tl-pop" id="qk-settings-pop"><label class="qk-tl-opt"><input type="checkbox" id="qk-ae"><span class="cb"></span>Auto Enroll<span class="qk-tip">Auto-enroll quests when the queue starts.</span></label><label class="qk-tl-opt"><input type="checkbox" id="qk-ac"><span class="cb"></span>Auto Claim<span class="qk-tip">Claim rewards automatically when quests finish. Discord captcha is always solved by you.</span></label></div></div><button class="qk-bb" id="qk-prog-refresh">&#x21bb;</button></div></div>' +
             '<div class="qk-list" id="qk-pl"></div>' +
             '<div class="qk-ft qk-ft-p"><button class="qk-btn" id="qk-pause" disabled>Pause</button><button class="qk-btn" id="qk-stopq" disabled>Stop</button>' +
             '<span class="qk-st"><span class="dc" id="qk-dc">0</span> done <span style="color:#80848e">|</span> <span class="fc" id="qk-fc">0</span> failed</span></div></div>' +
@@ -559,17 +916,49 @@
             '<div class="hs-desc" id="hs-desc"><div class="hs-dn"></div><div class="hs-dd"></div></div>' +
             '<div class="hs-t"><button class="hs-btn hs-ap" id="hs-ap" disabled>Apply Badge</button><button class="hs-btn hs-rm" id="hs-rm" disabled>Remove Badge</button></div></div>';
 
-        document.body.appendChild(p);document.body.appendChild(p);
+        document.body.appendChild(p);
         D = {
             pan: p, ql: document.getElementById('qk-ql'), pl: document.getElementById('qk-pl'),
             tabs: p.querySelectorAll('.qk-nav .qk-nav-tab'), ba: p.querySelector('#qk-b-quests'), bp: p.querySelector('#qk-b-prog'), bh: p.querySelector('#qk-b-hs'),
             addq: document.getElementById('qk-addq'), pause: document.getElementById('qk-pause'),
-            stopq: document.getElementById('qk-stopq'), qc: document.getElementById('qk-qc'),
+            stopq: document.getElementById('qk-stopq'),
             dc: document.getElementById('qk-dc'), fc: document.getElementById('qk-fc'),
             refresh: document.getElementById('qk-refresh'), ob: document.getElementById('qk-ob'),
+            back: document.getElementById('qk-back'),
             min: document.getElementById('qk-min'), close: document.getElementById('qk-close'),
             ap: document.getElementById('hs-ap'), rm: document.getElementById('hs-rm')
         };
+
+        let hl = p.querySelector('.qk-l');
+        if (hl) {
+            let brandImg = hl.querySelector('img');
+            let orbs = hl.querySelector('.qk-ob');
+            hl.textContent = '';
+            let slot = document.createElement('div'); slot.className = 'qk-hero-slot';
+            let strip = document.createElement('div'); strip.className = 'qk-hero-strip';
+            let mkBrand = () => {
+                let c = document.createElement('div'); c.className = 'qk-hero-cell';
+                let im = brandImg.cloneNode(true); im.removeAttribute('style'); im.className = 'qk-hero-brand-img';
+                let wm = document.createElement('span'); wm.className = 'qk-wm'; wm.innerHTML = 'Quest<span>ku</span>';
+                c.append(im, wm); return c;
+            };
+            let mkUser = () => {
+                let c = document.createElement('div'); c.className = 'qk-hero-cell qk-hero-user';
+                let w = document.createElement('span'); w.className = 'qk-hero-ava-w';
+                let av = document.createElement('img'); av.className = 'qk-hero-ava'; av.alt = ''; av.style.display = 'none';
+                let dc = document.createElement('img'); dc.className = 'qk-hero-deco'; dc.alt = ''; dc.style.display = 'none';
+                w.append(av, dc);
+                let nm = document.createElement('span'); nm.className = 'qk-hero-name';
+                c.append(w, nm);
+                bindHoverTip(c, 'Open profile', 700);
+                c.onclick = openProfile;
+                return c;
+            };
+            strip.append(mkBrand(), mkUser(), mkBrand());
+            slot.append(strip);
+            hl.append(slot);
+            if (orbs) hl.append(orbs);
+        }
 
 
         let navInd = document.getElementById('qk-nav-ind');
@@ -595,7 +984,15 @@
             t.onmouseenter = () => updateNavInd(t);
             t.onmouseleave = () => { if (activeTab) updateNavInd(activeTab); };
             t.onclick = () => {
-                if (hidden) { hidden = false; p.querySelectorAll('.qk-body, .qk-tl, .qk-list, .qk-ft').forEach(x => x.style.display = ''); D.min.textContent = '-'; }
+                if (hidden) {
+                    hidden = false; p.querySelectorAll('.qk-body, .qk-tl, .qk-list, .qk-ft').forEach(x => x.style.display = ''); D.min.textContent = '-';
+                } else if (t.classList.contains('act')) {
+                    hidden = true;
+                    p.querySelectorAll('.qk-body, .qk-tl, .qk-list, .qk-ft').forEach(x => x.style.display = 'none');
+                    D.min.textContent = '+';
+                    return;
+                }
+                const wasSame = t.classList.contains('act');
                 D.tabs.forEach(x => x.classList.remove('act'));
                 t.classList.add('act');
                 activeTab = t;
@@ -608,7 +1005,9 @@
                     renderHypeSquad();
                 } else if (t.dataset.t === 'prog') renderProgress();
                 if (scrollEl) {
-                    t.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+                    if (!wasSame) {
+                        t.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+                    }
                     setTimeout(() => updateNavInd(t), 300);
                 }
             };
@@ -631,9 +1030,75 @@
         document.addEventListener('mouseup', () => dr = false);
 
 
-        D.close.onclick = () => { p.remove(); c.remove(); D = null; };
+        D.close.onclick = () => {
+            if (D.close.classList.contains('arm')) { window.questkuKill(); return; }
+            D.close.classList.add('arm'); D.close.title = 'Click again to kill';
+            setTimeout(() => { if (D && D.close) D.close.classList.remove('arm'); }, 3000);
+        };
         let hidden = false;
         D.min.onclick = () => { hidden = !hidden; p.querySelectorAll('.qk-body, .qk-tl, .qk-list, .qk-ft').forEach(x => x.style.display = hidden ? 'none' : ''); D.min.textContent = hidden ? '+' : '-'; };
+
+        function bindHoverTip(el, text, delayMs) {
+            const tip = document.createElement('span'); tip.className = 'qk-hov-tip'; tip.textContent = text;
+            document.body.appendChild(tip);
+            let htl = null;
+            const show = () => {
+                clearTimeout(htl);
+                htl = setTimeout(() => {
+                    tip.style.display = 'block';
+                    const r = el.getBoundingClientRect();
+                    const t1 = tip.getBoundingClientRect();
+                    const hw = t1.width / 2;
+                    let lx = r.left + r.width / 2;
+                    lx = Math.max(hw + 4, Math.min(lx, window.innerWidth - hw - 4));
+                    let top;
+                    const below = r.bottom + 10;
+                    if (below + t1.height + 4 <= window.innerHeight) top = below;
+                    else top = Math.max(4, r.top - 10 - t1.height);
+                    tip.style.left = lx + 'px';
+                    tip.style.top = top + 'px';
+                }, delayMs);
+            };
+            const hide = () => { clearTimeout(htl); tip.style.display = 'none'; };
+            el.addEventListener('mouseenter', show);
+            el.addEventListener('mouseleave', hide);
+            return { hide };
+        }
+
+        let orbTip = null;
+        if (D.ob) {
+            let tip = D.ob.querySelector('.qk-ob-tip');
+            let syncNight = () => { if (!tip) return; let h = new Date().getHours(); tip.classList.toggle('qk-night', h >= 18 || h < 6); };
+            syncNight();
+            D.ob.onclick = (e) => {
+                e.stopPropagation();
+                if (hidden) {
+                    hidden = false;
+                    p.querySelectorAll('.qk-body, .qk-tl, .qk-list, .qk-ft').forEach(x => x.style.display = '');
+                    D.min.textContent = '-';
+                }
+                D.ob.classList.toggle('open'); syncNight();
+                if (orbTip) orbTip.hide();
+            };
+            if (tip) tip.onclick = (e) => { e.stopPropagation(); if (D && D.ob) D.ob.classList.remove('open'); };
+            orbTip = bindHoverTip(D.ob, 'Total balance', 700);
+        }
+        let qkx = document.getElementById('qk-ob-x');
+        if (qkx) qkx.onclick = (e) => { e.stopPropagation(); if (D && D.ob) D.ob.classList.remove('open'); };
+        let qkshop = document.getElementById('qk-shop');
+        if (qkshop) {
+            qkshop.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleShop(); };
+            updateShopLabel();
+        }
+        document.addEventListener('click', (e) => {
+            if (D && D.ob) D.ob.classList.remove('open');
+            if (D && D.pan && !p.contains(e.target) && !hidden) {
+                hidden = true;
+                p.querySelectorAll('.qk-body, .qk-tl, .qk-list, .qk-ft').forEach(x => x.style.display = 'none');
+                D.min.textContent = '+';
+            }
+        });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && D && D.ob) D.ob.classList.remove('open'); });
 
 
         D.addq.onclick = async () => {
@@ -642,8 +1107,8 @@
 
             if (unenrolled.length > 0) {
                 for (let q of unenrolled) {
-                    let ok = await enrollQuest(q);
-                    if (!ok) log.e('Enroll failed: ' + q.config.messages.questName);
+                    let r = await enrollQuest(q);
+                    if (!r.ok) log.e('Enroll failed: ' + q.config.messages.questName);
                 }
                 await sleep(500);
                 renderAllQuests();
@@ -660,12 +1125,13 @@
                 return;
             }
 
-            let sel = enrolled.map(q => ({ q, status: 'pending', pct: 0, curr: 0 }));
+            let sel = enrolled.map(q => ({ q, status: 'pending', pct: 0, curr: 0, attempts: 0 }));
             if (sel.length === 0) return;
             sel.sort((a, b) => getEstimatedDuration(a.q) - getEstimatedDuration(b.q));
             
             st.queue = sel;
             st.completed = 0; st.failed = 0;
+            saveQueue();
             D.addq.disabled = true;
             D.addq.classList.remove('enabled');
             st.allQuests.forEach(q => { q._sel = false; });
@@ -707,15 +1173,20 @@
             updateStats();
             processQueue();
         };
-        let killBtn = document.getElementById('qk-kill');
-        if (killBtn) killBtn.onclick = () => {
-            log.h('Kill Questku — stopping all processes');
-            window.questkuKill();
-            log.h('Questku ready — all clear');
+                let flashBtn = (btn, ms) => {
+            if (!btn) return;
+            btn.classList.add('qkr');
+            setTimeout(() => btn.classList.remove('qkr'), ms || 600);
         };
-        if (D.refresh) D.refresh.onclick = refreshQuests;
+        if (D.refresh) D.refresh.onclick = () => { flashBtn(D.refresh, 900); refreshQuests(); };
+        if (D.ql && D.back) {
+            let backShown = false;
+            const syncBack = () => { const s = D.ql.scrollTop > 120; if (s !== backShown) { backShown = s; D.back.classList.toggle('show', s); } };
+            D.ql.addEventListener('scroll', syncBack);
+            D.back.onclick = (e) => { e.stopPropagation(); D.ql.scrollTo({ top: 0, behavior: 'smooth' }); };
+        }
         let progRefresh = document.getElementById('qk-prog-refresh');
-        if (progRefresh) progRefresh.onclick = () => { renderProgress(); };
+        if (progRefresh) progRefresh.onclick = () => { flashBtn(progRefresh); renderProgress(); };
         if (D.ap) D.ap.onclick = hsApply;
         if (D.rm) D.rm.onclick = hsRemove;
         setupToolbar();
@@ -724,7 +1195,7 @@
 
 
         function setupToolbar() {
-            let closeAll = () => p.querySelectorAll('.qk-tl-pop.open').forEach(x => x.classList.remove('open'));
+            let closeAll = () => { p.querySelectorAll('.qk-tl-pop.open').forEach(x => x.classList.remove('open')); let sb = document.getElementById('qk-settings'); if (sb) sb.classList.remove('open'); let kb = document.getElementById('qk-kill'); if (kb) { kb.classList.remove('arm'); kb.textContent = 'Kill'; } };
             p.addEventListener('click', (e) => { if (!e.target.closest('.qk-tl-dd')) closeAll(); });
             function isFilterDefault() {
                 let keys = Object.keys(uiState.filter);
@@ -733,10 +1204,7 @@
 
             document.getElementById('qk-sel-toggle').onclick = () => {
                 let all = st.allQuests;
-                let selectable = all.filter(x => {
-                    let cfg = x.config.taskConfig ?? x.config.taskConfigV2;
-                    return TASKS.find(y => cfg?.tasks?.[y] != null) && !x.userStatus?.completedAt && !qActive(x);
-                });
+                let selectable = all.filter(x => isSelectable(x));
                 let allSelected = selectable.length > 0 && selectable.every(x => x._sel);
                 let targetState = !allSelected;
                 selectable.forEach(q => q._sel = targetState);
@@ -745,7 +1213,7 @@
                     if (i >= 0 && all[i]) {
                         cd.classList.toggle('sel', all[i]._sel);
                         let sBtn = cd.querySelector('.qk-sel-btn');
-                        if (sBtn) {
+                        if (sBtn && !sBtn.disabled) {
                             sBtn.textContent = all[i]._sel ? 'Deselect' : 'Select';
                             sBtn.classList.toggle('act', all[i]._sel);
                         }
@@ -753,7 +1221,7 @@
                 });
                 document.querySelectorAll('.qk-el .qk-sel-btn').forEach(sBtn => {
                     let i = parseInt(sBtn.dataset.i);
-                    if (all[i]) {
+                    if (all[i] && !sBtn.disabled) {
                         sBtn.textContent = all[i]._sel ? 'Deselect' : 'Select';
                         sBtn.classList.toggle('act', all[i]._sel);
                     }
@@ -823,6 +1291,18 @@
                 closeAll();
                 renderProgress();
             };
+            let settingsBtn = document.getElementById('qk-settings');
+            if (settingsBtn) settingsBtn.onclick = (e) => {
+                e.stopPropagation();
+                let sp = document.getElementById('qk-settings-pop');
+                let open = sp.classList.contains('open');
+                closeAll();
+                if (!open) { sp.classList.add('open'); settingsBtn.classList.add('open'); }
+            };
+            let acBox = document.getElementById('qk-ac');
+            if (acBox) { acBox.checked = !!set.autoClaim; acBox.onchange = () => { set.autoClaim = acBox.checked; qstore('questku_autoClaim', set.autoClaim ? '1' : '0'); log.i('Auto Claim ' + (set.autoClaim ? 'ON' : 'OFF')); }; }
+            let aeBox = document.getElementById('qk-ae');
+            if (aeBox) { aeBox.checked = !!set.autoEnroll; aeBox.onchange = () => { set.autoEnroll = aeBox.checked; qstore('questku_autoEnroll', set.autoEnroll ? '1' : '0'); log.i('Auto Enroll ' + (set.autoEnroll ? 'ON' : 'OFF')); }; }
             let selToggle = document.getElementById('qk-prog-sel-toggle');
             if (selToggle) selToggle.onclick = () => {
                 let qq = st.queue;
@@ -894,7 +1374,7 @@
             dur = m + ' minute' + (m > 1 ? 's' : '');
             return 'Stream <span style="color:#545ded">' + game + '</span> for ' + dur + '.';
         }
-        if (t === 'PLAY_ACTIVITY') {
+        if (t === 'PLAY_ACTIVITY' || t === 'ACHIEVEMENT_IN_ACTIVITY') {
             return 'Complete the activity to earn rewards.';
         }
         return 'Complete the quest to earn rewards.';
@@ -941,50 +1421,185 @@
         });
     }
 
-    function getRewardTypes(q) {
-        let types = [];
-        let rewards = q.config.rewardsConfig?.rewards || [];
-        for (let r of rewards) {
-            let t = r.type;
-            if (t === 4 || r.orbQuantity || r.amount) { if (!types.includes('orb')) types.push('orb'); }
-            if (t === 3 || r.avatarDecoration || r.avatarDecorationDecoration) { if (!types.includes('avatardeco')) types.push('avatardeco'); }
-            if (r.profileEffect || r.profileEffectId) { if (!types.includes('profileeffect')) types.push('profileeffect'); }
-            let known = t === 3 || t === 4 || r.orbQuantity || r.amount || r.avatarDecoration || r.avatarDecorationDecoration || r.profileEffect || r.profileEffectId;
-            if (!known) { if (!types.includes('ingame')) types.push('ingame'); }
-        }
-        return types;
-    }
 
-    function getRewardHtml(q) {
-        let rewards = q.config.rewardsConfig?.rewards || [];
-        let parts = [];
-        for (let r of rewards) {
-            let found = false;
-            if (r.type === 4 || r.orbQuantity || r.amount || r.premiumOrbQuantity) {
-                let val = (userPremiumType >= 2 && r.premiumOrbQuantity) ? r.premiumOrbQuantity : (r.orbQuantity || r.amount || 0);
-                let h = (userPremiumType >= 2 && r.premiumOrbQuantity) ? val + ' Orbs' : (r.messages?.name || val + ' Orbs');
-                if (userPremiumType >= 2 && r.premiumOrbQuantity) h += ' <img class="qk-nitro-badge" src="' + NITRO_BADGE + '">';
-                parts.push('<span class="qk-rw-item">' + h + '</span>'); found = true;
-            }
-            if (r.type === 3 || r.avatarDecoration || r.avatarDecorationDecoration) {
-                let name = r.messages?.name || 'Avatar Decoration';
-                parts.push('<span class="qk-rw-item"><span class="qk-rw-label">' + name + '</span></span>'); found = true;
-            }
-            if (r.profileEffect || r.profileEffectId) {
-                let eff = r.profileEffect || r.profileEffectId;
-                let name = r.messages?.name || (typeof eff === 'object' ? (eff.name || 'Profile Effect') : 'Profile Effect');
-                parts.push('<span class="qk-rw-item"><span class="qk-rw-label">' + name + '</span></span>'); found = true;
-            }
-            if (!found) parts.push('<span class="qk-rw-item">' + (r.messages?.name || 'In-Game Reward') + '</span>');
-        }
-        return parts.join('<span class="qk-rw-plus"> + </span>');
-    }
+
+
 
     function queueItem(q) {
         return st.queue.find(x => x.q.id === q.id);
     }
+    function isWatchQuest(item) {
+        const cfg = (item.q.config.taskConfig ?? item.q.config.taskConfigV2) || {};
+        const tasks = cfg.tasks || {};
+        return tasks.WATCH_VIDEO != null || tasks.WATCH_VIDEO_ON_MOBILE != null;
+    }
+    function expBadge(q) {
+        if (!q) return false;
+        if (q.userStatus?.completedAt && !q.userStatus?.claimedAt) return false;
+        return isExpired(q);
+    }
     function qActive(q) {
         return st.queue.some(x => x.q.id === q.id && !['done','failed','stopped'].includes(x.status));
+    }
+var __core = (function(){ var merged = {}; Object.assign(merged, (function(){ var module={exports:{}}; // Core API request layer — single source of truth, injected by scripts/build.js.
+// Requirable directly by node:test.
+//
+// Deps object (injected by the build wrapper) keeps this hermetic:
+//   { api, maxRetries, logRate, logRetry, sleepSec }
+//     api        the Discord webpack API module (api.get/api.post/api.del), live thunk not required
+//     maxRetries number of retries after the first attempt
+//     logRate()  rate-limit notice logger
+//     logRetry() generic retry notice logger
+//     sleep      ms -> Promise
+//
+// Behavior (kept identical to the legacy in-file apiReq):
+//   - res.status 429              -> wait retry_after + jitter, retry
+//   - res.status 4xx (non-429)    -> return response (no retry)
+//   - thrown 429                  -> wait, retry
+//   - thrown 4xx                  -> rethrow (no retry)
+//   - thrown 5xx/network          -> retry up to maxRetries, then rethrow
+//   - satisfied -> return response
+
+async function apiReq(deps, method, url, body) {
+  const { api, maxRetries, logRate, logRetry, sleep } = deps;
+  for (let i = 0; i <= maxRetries; i++) {
+    try {
+      let res;
+      if (method === 'GET') {
+        res = await api.get({ url });
+      } else if (method === 'DEL' || method === 'DELETE') {
+        res = await api.del({ url });
+      } else {
+        res = await api.post({ url, body });
+      }
+      if (res.status === 429) {
+        const w = (res.body?.retry_after || 30) + Math.random() * 5;
+        logRate('Rate limited - waiting ' + Math.ceil(w) + 's');
+        await sleep(w); continue;
+      }
+      if (res.status >= 400 && res.status < 500) return res;
+      return res;
+    } catch (e) {
+      if (e && e.status === 429) {
+        const w = (e.body?.retry_after || 30) + Math.random() * 5;
+        logRate('Rate limited - waiting ' + Math.ceil(w) + 's');
+        await sleep(w); continue;
+      }
+      if (e && e.status >= 400 && e.status < 500) throw e;
+      if (i === maxRetries) throw e;
+      logRetry('Retry ' + (i + 1) + '/' + maxRetries);
+      await sleep(2 + i * 3);
+    }
+  }
+}
+
+module.exports = { apiReq };; return module.exports; })()); Object.assign(merged, (function(){ var module={exports:{}}; // Core quest logic - single source of truth, injected by scripts/build.js.
+// Requirable directly by node:test.
+//
+// Legacy-compatible wrappers in the build preserve the old call sites:
+//   isExpired(q)                    (wrapper passes Date.now())
+//   isDesktopOnlyQuest(q)           (wrapper passes isDesktop)
+
+function isExpired(q, now) {
+    if (!q || !q.config?.expiresAt) return false;
+    return new Date(q.config.expiresAt).getTime() < now;
+}
+
+function isDesktopOnlyQuest(q, isDesktop) {
+    let cfg = q.config.taskConfig ?? q.config.taskConfigV2;
+    let tasks = cfg?.tasks || {};
+    let hasWeb = ['WATCH_VIDEO', 'PLAY_ACTIVITY', 'PLAY_ON_DESKTOP', 'WATCH_VIDEO_ON_MOBILE'].some(y => tasks[y] != null);
+    if (isDesktop || hasWeb) return false;
+    return ['STREAM_ON_DESKTOP', 'PLAY_ON_XBOX', 'PLAY_ON_PLAYSTATION'].some(y => tasks[y] != null);
+}
+
+module.exports = { isExpired, isDesktopOnlyQuest };; return module.exports; })()); Object.assign(merged, (function(){ var module={exports:{}}; // Core reward helpers - single source of truth, injected into questku.js by
+// scripts/build.js under a CJS shim. Requirable directly by node:test.
+//
+// Kept signature-compatible with the legacy in-file versions:
+//   getRewardTypes(q)            pure
+//   getOrbValue(rewards, premiumType)   premiumType passed in (was closure userPremiumType)
+//   getRewardHtml(q, {premiumType, nitroBadge})
+
+function getRewardTypes(q) {
+    let types = [];
+    let rewards = q.config.rewardsConfig?.rewards || [];
+    for (let r of rewards) {
+        let t = r.type;
+        if (t === 4 || r.orbQuantity || r.amount) { if (!types.includes('orb')) types.push('orb'); }
+        if (t === 3 || r.avatarDecoration || r.avatarDecorationDecoration) { if (!types.includes('avatardeco')) types.push('avatardeco'); }
+        if (r.profileEffect || r.profileEffectId) { if (!types.includes('profileeffect')) types.push('profileeffect'); }
+        let known = t === 3 || t === 4 || r.orbQuantity || r.amount || r.avatarDecoration || r.avatarDecorationDecoration || r.profileEffect || r.profileEffectId;
+        if (!known) { if (!types.includes('ingame')) types.push('ingame'); }
+    }
+    return types;
+}
+
+function getOrbValue(rewards, premiumType) {
+    let r = rewards?.[0];
+    if (!r) return 0;
+    if (premiumType >= 2 && r.premiumOrbQuantity) return r.premiumOrbQuantity;
+    return r.orbQuantity || r.amount || 0;
+}
+
+function getRewardHtml(q, opts) {
+    const premiumType = (opts && opts.premiumType) || 0;
+    const nitroBadge = (opts && opts.nitroBadge) || '';
+    let rewards = q.config.rewardsConfig?.rewards || [];
+    let parts = [];
+    for (let r of rewards) {
+        let found = false;
+        if (r.type === 4 || r.orbQuantity || r.amount || r.premiumOrbQuantity) {
+            let val = (premiumType >= 2 && r.premiumOrbQuantity) ? r.premiumOrbQuantity : (r.orbQuantity || r.amount || 0);
+            let h = (premiumType >= 2 && r.premiumOrbQuantity) ? val + ' Orbs' : (r.messages?.name || val + ' Orbs');
+            if (premiumType >= 2 && r.premiumOrbQuantity) h += ' <img class="qk-nitro-badge" src="' + nitroBadge + '">';
+            parts.push('<span class="qk-rw-item">' + h + '</span>'); found = true;
+        }
+        if (r.type === 3 || r.avatarDecoration || r.avatarDecorationDecoration) {
+            let name = r.messages?.name || 'Avatar Decoration';
+            parts.push('<span class="qk-rw-item"><span class="qk-rw-label">' + name + '</span></span>'); found = true;
+        }
+        if (r.profileEffect || r.profileEffectId) {
+            let eff = r.profileEffect || r.profileEffectId;
+            let name = r.messages?.name || (typeof eff === 'object' ? (eff.name || 'Profile Effect') : 'Profile Effect');
+            parts.push('<span class="qk-rw-item"><span class="qk-rw-label">' + name + '</span></span>'); found = true;
+        }
+        if (!found) parts.push('<span class="qk-rw-item">' + (r.messages?.name || 'In-Game Reward') + '</span>');
+    }
+    return parts.join('<span class="qk-rw-plus"> + </span>');
+}
+
+module.exports = { getRewardTypes, getOrbValue, getRewardHtml };; return module.exports; })()); return merged; })();
+    var getRewardTypes = __core.getRewardTypes;
+    var getOrbValue = function(rewards){ return __core.getOrbValue(rewards, userPremiumType); };
+    var getRewardHtml = function(q){ return __core.getRewardHtml(q, { premiumType: userPremiumType, nitroBadge: NITRO_BADGE }); };
+    var isExpired = function(q){ return __core.isExpired(q, Date.now()); };
+    var isDesktopOnlyQuest = function(q){ return __core.isDesktopOnlyQuest(q, isDesktop); };
+    var apiReq = function(method, url, body){ return __core.apiReq({ api: Q.api, maxRetries: set.maxRetries, logRate: function(m){ log.i(m); }, logRetry: function(m){ log.i(m); }, sleep: function(secs){ return sleepSec(secs); } }, method, url, body); };
+    function isSelectable(x) {
+        let cfg = x.config.taskConfig ?? x.config.taskConfigV2;
+        let hasTask = TASKS.some(y => cfg?.tasks?.[y] != null);
+        return !isExpired(x) && hasTask && !x.userStatus?.completedAt && !qActive(x) && !isDesktopOnlyQuest(x);
+    }
+
+    function bindOrbHover(list) {
+        if (!list) return;
+        list.querySelectorAll('.qk-cd').forEach(card => {
+            card.querySelectorAll('.qk-orb-card, .qk-rw-vid').forEach(orb => {
+                card.addEventListener('mouseenter', () => { orb.play().catch(() => {}); });
+                card.addEventListener('mouseleave', () => { orb.pause(); });
+            });
+        });
+    }
+
+    function showStaticFrame(el) {
+        const snap = () => { try { el.pause(); el.currentTime = 0; } catch (e) {} };
+        el.preload = 'auto';
+        el.addEventListener('loadeddata', snap, { once: true });
+        if (el.readyState >= 2) snap();
+    }
+    function hydrateStaticFrames(list) {
+        (list.querySelectorAll('.qk-orb-card, .qk-rw-vid') || []).forEach(showStaticFrame);
     }
 
     function renderAllQuests() {
@@ -1002,13 +1617,13 @@
         let filtered = all.filter(q => {
             let cfg = q.config.taskConfig ?? q.config.taskConfigV2;
             let t = TASKS.find(x => cfg?.tasks?.[x] != null);
-            let c = !!q.userStatus?.completedAt, e = !!q.userStatus?.enrolledAt, x = new Date(q.config.expiresAt).getTime() < Date.now();
+            let c = !!q.userStatus?.completedAt, e = !!q.userStatus?.enrolledAt, x = expBadge(q);
             if (statusActive) {
-                let m = (flt.avail && !e && !c && !x) || (flt.prog && e && !c) || (flt.done && c) || (flt.expired && x);
+                let m = (flt.avail && !e && !c && !x) || (flt.prog && e && !c && !x) || (flt.done && c && !x) || (flt.expired && x);
                 if (!m) return false;
             }
             if (typeActive) {
-                let m = (flt.play && (t==='PLAY_ON_DESKTOP'||t==='PLAY_ON_XBOX'||t==='PLAY_ON_PLAYSTATION')) || (flt.watch && (t==='WATCH_VIDEO'||t==='WATCH_VIDEO_ON_MOBILE')) || (flt.stream && t==='STREAM_ON_DESKTOP') || (flt.activity && t==='PLAY_ACTIVITY');
+                let m = (flt.play && (t==='PLAY_ON_DESKTOP'||t==='PLAY_ON_XBOX'||t==='PLAY_ON_PLAYSTATION')) || (flt.watch && (t==='WATCH_VIDEO'||t==='WATCH_VIDEO_ON_MOBILE')) || (flt.stream && t==='STREAM_ON_DESKTOP') || (flt.activity && (t==='PLAY_ACTIVITY'||t==='ACHIEVEMENT_IN_ACTIVITY'));
                 if (!m) return false;
             }
             if (rewardActive) {
@@ -1024,13 +1639,13 @@
         else if (uiState.sort === 'progress') filtered.sort((a,b) => { let p = q => { let cfg=q.config.taskConfig??q.config.taskConfigV2;let t=TASKS.find(x=>cfg?.tasks?.[x]!=null);let tg=t&&cfg?.tasks?.[t]?.target||1;return (q.userStatus?.progress?.[t]?.value||0)/tg; }; return p(b)-p(a); });
         else if (uiState.sort === 'recent') filtered.sort((a,b) => new Date(b.config.expiresAt)-new Date(a.config.expiresAt));
         else if (uiState.sort === 'started') filtered.sort((a,b) => { let ea=a.userStatus?.enrolledAt||0,eb=b.userStatus?.enrolledAt||0; return new Date(eb)-new Date(ea); });
-        if (uiState.sort === 'suggested') filtered.sort((a,b) => { let p=q=>{let cfg=q.config.taskConfig??q.config.taskConfigV2;let tt=TASKS.find(y=>cfg?.tasks?.[y]!=null);let c=!!q.userStatus?.completedAt,cl=!!q.userStatus?.claimedAt,e=!!q.userStatus?.enrolledAt,x=new Date(q.config.expiresAt).getTime()<Date.now();if(x)return 5;if(c&&!cl)return 0;if(c)return 4;if(!tt)return 3;if(e)return 2;return 1;};let d=p(a)-p(b);if(d)return d;return new Date(b.config.expiresAt)-new Date(a.config.expiresAt);});
+        if (uiState.sort === 'suggested') filtered.sort((a,b) => { let p=q=>{let cfg=q.config.taskConfig??q.config.taskConfigV2;let tt=TASKS.find(y=>cfg?.tasks?.[y]!=null);let c=!!q.userStatus?.completedAt,cl=!!q.userStatus?.claimedAt,e=!!q.userStatus?.enrolledAt,x=expBadge(q);if(x)return 5;if(c&&!cl)return 0;if(c)return 4;if(!tt)return 3;if(e)return 2;return 1;};let d=p(a)-p(b);if(d)return d;return new Date(b.config.expiresAt)-new Date(a.config.expiresAt);});
         let html = '';
         for (let q of filtered) {
             let enrolled = !!q.userStatus?.enrolledAt;
             let completed = !!q.userStatus?.completedAt;
             let claimed = !!q.userStatus?.claimedAt;
-            let exp = new Date(q.config.expiresAt).getTime() < Date.now();
+            let exp = expBadge(q);
             let cfg = q.config.taskConfig ?? q.config.taskConfigV2;
             let t = TASKS.find(x => cfg?.tasks?.[x] != null);
             let unsupported = !t;
@@ -1039,61 +1654,71 @@
             let qActive = qi && !qTerm;
             let done = completed || qi?.status === 'done';
             let qLabel = qi ? (progStatusLabels[qi.status] || qi.status) : '';
-            let stLabel = unsupported ? 'Unsupported'
-                : done ? (completed && !claimed ? 'Unclaimed' : 'Done')
+            let stLabel = exp ? 'Expired'
+                : done ? (!claimed ? 'Unclaimed' : 'Done')
                 : qi?.status === 'failed' ? 'Failed'
                 : qi?.status === 'stopped' ? 'Stopped'
                 : qActive ? qLabel
-                : exp ? 'Expired'
+                : unsupported ? 'Unsupported'
                 : enrolled ? 'Enrolled'
                 : 'Not Enrolled';
-            let stCls = unsupported ? ''
-                : done ? (completed && !claimed ? 'uc' : 'dn')
+            let stCls = exp ? 'brn'
+                : done ? (!claimed ? 'uc' : 'dn')
                 : qi?.status === 'failed' ? 'fl'
                 : qi?.status === 'stopped' ? 'fl'
-                : qActive ? (qi.status === 'running' ? 'en' : 'rd')
-                : exp ? 'fl'
+                : qActive ? (qi.status === 'running' ? 'en' : '')
+                : unsupported ? ''
                 : enrolled ? 'en'
                 : 'pn';
             let taskName = TASK_NAMES[t] || t || 'Quest';
             let need = t && cfg?.tasks?.[t]?.target ? cfg.tasks[t].target : 0;
             let isPlay = t === 'PLAY_ON_DESKTOP' || t === 'PLAY_ON_XBOX' || t === 'PLAY_ON_PLAYSTATION' || t === 'STREAM_ON_DESKTOP';
+            let isDesktopOnly = isDesktopOnlyQuest(q);
             let unit = (t === 'WATCH_VIDEO' || t === 'WATCH_VIDEO_ON_MOBILE') ? 's' : (isPlay ? 'min' : 'min');
             let durStr = need ? (isPlay ? Math.ceil(need / 60) : need) + unit : '';
             let icoCls = '';
-            let firstReward = q.config.rewardsConfig?.rewards?.[0];
-            let rewIconUrl = firstReward?.type === 3 && firstReward.asset ? 'https://cdn.discordapp.com/' + firstReward.asset + '?format=webp&width=64&height=64' : null;
+            let rewards = q.config.rewardsConfig?.rewards || [];
+            let iconReward = rewards.find(r => r.type === 3 || r.avatarDecoration || r.profileEffect || r.profileEffectId || r.avatarDecorationDecoration)
+                || rewards.find(r => r.type === 4 || r.orbQuantity || r.amount || r.premiumOrbQuantity)
+                || rewards[0];
+let rewVid = (iconReward?.type === 3 || iconReward?.type === 1) && iconReward.asset && /\.(mp4|webm)(\?|$)/i.test(iconReward.asset);
+            let rewIconUrl = (iconReward?.type === 3 || iconReward?.type === 1) && iconReward.asset ? 'https://cdn.discordapp.com/' + iconReward.asset + (rewVid ? '' : '?format=webp&width=64&height=64') : null;
             let appIcon = q.config.application?.id && appCache[q.config.application.id];
-            let icoHtml = rewIconUrl ? '<img src="' + rewIconUrl + '" style="width:34px;height:34px;border-radius:8px;display:block">'
-                : firstReward?.type === 4
-                ? '<img src="https://cdn.discordapp.com/assets/content/fb761d9c206f93cd8c4e7301798abe3f623039a4054f2e7accd019e1bb059fc8.webm?format=webp" style="width:34px;height:34px;border-radius:8px;display:block">'
+            let icoHtml = rewVid ? '<video class="qk-rw-vid" muted loop playsinline preload="none" src="' + rewIconUrl + '"></video>'
+                : rewIconUrl ? '<img src="' + rewIconUrl + '" style="width:34px;height:34px;border-radius:8px;display:block">'
+                : iconReward?.type === 4
+                ? '<video class="qk-orb-card" muted loop playsinline preload="none" src="https://cdn.discordapp.com/assets/content/b8fe318002139f2fabd6255aef10a0a625bb10aa9f8394efd6575115c1dca19a.webm"></video>'
                 : appIcon ? '<img src="https://cdn.discordapp.com/app-icons/' + q.config.application.id + '/' + appIcon + '.png?size=64" style="width:34px;height:34px;border-radius:8px;display:block">'
-                : '<img src="https://cdn.discordapp.com/assets/content/fb761d9c206f93cd8c4e7301798abe3f623039a4054f2e7accd019e1bb059fc8.webm?format=webp" style="width:34px;height:34px;border-radius:8px;display:block">';
+                : '<video class="qk-orb-card" muted loop playsinline preload="none" src="https://cdn.discordapp.com/assets/content/b8fe318002139f2fabd6255aef10a0a625bb10aa9f8394efd6575115c1dca19a.webm"></video>';
             let banUrl = q.config.assets?.quest_bar_hero || q.config.assets?.hero;
             let banFull = banUrl ? (banUrl.startsWith('http') ? banUrl : 'https://cdn.discordapp.com/' + banUrl + (banUrl.includes('?') ? '' : '?format=webp&width=1320&height=370')) : '';
             let banVidUrl = q.config.assets?.heroVideo || q.config.assets?.questBarHeroVideo;
-            let banVid = banVidUrl ? (banVidUrl.startsWith('http') ? banVidUrl : 'https://cdn.discordapp.com/' + banVidUrl) : null;
+            let banVid = banVidUrl ? buildAssetUrl(q.id, banVidUrl) : null;
             let selCls = q._sel ? ' sel' : '';
-            let cantSel = unsupported || done || qi?.status === 'failed' || qi?.status === 'stopped' || qActive;
+            let cantSel = exp || unsupported || done || qi?.status === 'failed' || qi?.status === 'stopped' || qActive || isDesktopOnly;
             let selText = cantSel ? stLabel : q._sel ? 'Deselect' : 'Select';
             let selClsBtn = q._sel ? 'qk-sel-btn qk-bb act' : 'qk-sel-btn qk-bb';
             let selDisabled = cantSel ? ' disabled' : '';
-            let vqLabel = (completed && !claimed) ? 'Claim' : 'View Quest';
+            let vqDisabled = exp || isDesktopOnly ? ' disabled' : '';
+            let vqLabel = (completed && !claimed) ? 'Claim' : done ? 'View Reward' : 'View Quest';
+            let desktopHint = isDesktopOnly ? '<a class="qk-desk-hint" href="discord://-/quest-home#' + q.id + '" target="_blank" title="Open in desktop"><svg aria-hidden="true" role="img" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="transparent"></circle><path fill="currentColor" fill-rule="evenodd" d="M23 12a11 11 0 1 1-22 0 11 11 0 0 1 22 0Zm-9.5-4.75a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Zm-.77 3.96a1 1 0 1 0-1.96-.42l-1.04 4.86a2.77 2.77 0 0 0 4.31 2.83l.24-.17a1 1 0 1 0-1.16-1.62l-.24.17a.77.77 0 0 1-1.2-.79l1.05-4.86Z" clip-rule="evenodd"></path></svg><span>Use the desktop app to make progress!</span></a>' : '';
             let logoData = getGameLogo(q);
             let logoUrl = logoData ? logoData.url : null;
             if (!logoData && q.config.application?.id && !appCache[q.config.application.id] && !appFetching[q.config.application.id]) {
                 appFetching[q.config.application.id] = true;
                 apiReq('GET', '/applications/public?application_ids=' + q.config.application.id).then(res => {
                     let icon = res?.body?.[0]?.icon;
-                    if (icon) { appCache[q.config.application.id] = icon; appFetching[q.config.application.id] = false; }
+                    if (icon) appCache[q.config.application.id] = icon;
+                    appFetching[q.config.application.id] = false;
                 }).catch(() => { delete appFetching[q.config.application.id]; });
             }
             html += '<div class="qk-cd' + selCls + '">' +
                 '<div class="qk-ban-wrap">' +
                 (banFull ? '<img class="qk-ban" src="' + banFull + '" loading="lazy" onerror="this.style.display=\'none\'">' : '<div class="qk-ban qk-ban-g"></div>') +
-                (banVid ? '<video class="qk-ban-vid" muted loop playsinline src="' + banVid + '" onerror="this.style.display=\'none\'"></video>' : '') +
+                (banVid ? '<video class="qk-ban-vid" muted loop playsinline preload="none" src="' + banVid + '" onerror="this.style.display=\'none\'"></video>' : '') +
                 '<div class="qk-ban-overlay"></div>' +
                 (logoUrl ? '<div class="qk-game-logo-wrap"><img class="qk-game-logo" src="' + logoUrl + '" loading="lazy" onerror="this.style.display=\'none\'"><span class="qk-promoted">Promoted by <strong>' + (q.config.messages?.gameTitle || q.config.application?.name || 'Quest') + '</strong></span></div>' : '') +
+                (desktopHint ? '<div class="qk-desk-overlay">' + desktopHint + '</div>' : '') +
                 '</div>' +
                 '<div class="qk-bd"><div class="qk-top">' +
                 '<div class="qk-ico ' + icoCls + '">' + icoHtml + '</div>' +
@@ -1101,7 +1726,7 @@
                 '<span class="qk-tg ' + stCls + '">' + stLabel + '</span></div>' +
                 '<div class="qk-cd-d"><div class="qk-el">' +
                 '<button class="' + selClsBtn + '"' + selDisabled + ' data-i="' + q._i + '">' + selText + '</button>' +
-                '<button class="qk-bb qk-vq" data-i="' + q._i + '">' + vqLabel + '</button>' +
+                '<button class="qk-bb qk-vq"' + vqDisabled + ' data-i="' + q._i + '">' + vqLabel + '</button>' +
                 '</div></div></div></div>';
         }
         if (filtered.length === 0) {
@@ -1109,6 +1734,7 @@
             return;
         }
         list.innerHTML = html;
+        hydrateStaticFrames(list);
         list.querySelectorAll('.qk-top').forEach(h => {
             h.onclick = () => {
                 let dt = h.parentElement.querySelector('.qk-cd-d');
@@ -1135,7 +1761,7 @@
                 e.stopPropagation();
                 let i = parseInt(btn.dataset.i);
                 let q = st.allQuests[i];
-                if (q) gotoQuest(q.id);
+                if (q) (q.userStatus?.completedAt && !q.userStatus?.claimedAt) ? claimQuest(q) : gotoQuest(q.id);
             };
         });
 
@@ -1165,23 +1791,28 @@
         let sb = document.getElementById('qk-sort-btn');
         if (sb) sb.textContent = sortLabel[uiState.sort] + ' \u25BC';
         document.getElementById('qk-sort-pop').querySelectorAll('input[type=radio]').forEach(rb => { rb.checked = rb.dataset.sort === uiState.sort; });
+        bindOrbHover(list);
     }
 
     function updateAddqBtn() {
         if (!D || !D.addq) return;
         let unenrolled = st.allQuests.filter(x => x._sel && !x.userStatus?.completedAt && !x.userStatus?.enrolledAt && !qActive(x));
         let enrolled = st.allQuests.filter(x => x._sel && !x.userStatus?.completedAt && x.userStatus?.enrolledAt && !qActive(x));
-        let hasUnenrolled = unenrolled.length > 0;
-        let hasEnrolled = enrolled.length > 0;
-        let has = hasUnenrolled || hasEnrolled;
-        D.addq.disabled = !has;
-        D.addq.classList.toggle('enabled', has);
-        if (hasUnenrolled) {
+        let has = unenrolled.length > 0 || enrolled.length > 0;
+        let ft = D.addq.closest('.qk-ft');
+        if (!has) {
+            D.addq.style.display = 'none';
+            if (ft) ft.style.display = 'none';
+            return;
+        }
+        D.addq.style.display = '';
+        if (ft) ft.style.display = '';
+        D.addq.disabled = false;
+        D.addq.classList.add('enabled');
+        if (unenrolled.length) {
             D.addq.textContent = unenrolled.length === 1 ? 'Enroll' : 'Enroll (' + unenrolled.length + ')';
-        } else if (hasEnrolled) {
-            D.addq.textContent = enrolled.length === 1 ? 'Start Queue' : 'Start Queue (' + enrolled.length + ')';
         } else {
-            D.addq.textContent = 'Start Queue';
+            D.addq.textContent = enrolled.length === 1 ? 'Start Queue' : 'Start Queue (' + enrolled.length + ')';
         }
     }
 
@@ -1190,10 +1821,7 @@
         let btn = document.getElementById('qk-sel-toggle');
         if (!btn) return;
         let all = st.allQuests;
-        let selectable = all.filter(x => {
-            let cfg = x.config.taskConfig ?? x.config.taskConfigV2;
-            return TASKS.find(y => cfg?.tasks?.[y] != null) && !x.userStatus?.completedAt && !qActive(x);
-        });
+        let selectable = all.filter(x => isSelectable(x));
         let hasSelectable = selectable.length > 0;
         let allSelected = hasSelectable && selectable.every(x => x._sel);
         btn.disabled = !hasSelectable;
@@ -1225,7 +1853,10 @@
         let progStatusActive = Object.keys(flt).some(k => k==='running'||k==='pending'||k==='done'||k==='failed'||k==='paused'||k==='stopped');
         let filtered = qq.filter(item => {
             let s = item.status === 'paused' || (item._paused && st.running && item.status === 'running') ? 'paused' : item.status;
-            if (progStatusActive) return flt[s];
+            if (progStatusActive) {
+                if (expBadge(item.q)) return false;
+                return flt[s];
+            }
             return true;
         });
         if (uiState.progSort === 'name') filtered.sort((a,b) => a.q.config.messages.questName.localeCompare(b.q.config.messages.questName));
@@ -1236,8 +1867,8 @@
             let item = filtered[i];
             let q = item.q;
             let idx = qq.indexOf(item);
-            let stLabel = item.status === 'done' ? (q.userStatus?.completedAt && !q.userStatus?.claimedAt ? 'Unclaimed' : 'Done') : item.status === 'failed' ? 'Failed' : item.status === 'stopped' ? 'Stopped' : (item._paused || item.status === 'paused') && st.running ? 'Paused' : item.status === 'running' ? 'Running' : 'Pending';
-            let stCls = item.status === 'done' ? (q.userStatus?.completedAt && !q.userStatus?.claimedAt ? 'uc' : 'dn') : item.status === 'failed' ? 'fl' : item.status === 'stopped' ? 'fl' : (item._paused || item.status === 'paused') && st.running ? 'pn' : item.status === 'running' ? 'rd' : '';
+            let stLabel = expBadge(q) ? 'Expired' : item.status === 'done' ? (!q.userStatus?.claimedAt ? 'Unclaimed' : 'Done') : item.status === 'failed' ? 'Failed' : item.status === 'stopped' ? 'Stopped' : (item._paused || item.status === 'paused') && st.running ? 'Paused' : item.status === 'running' ? 'Running' : 'Pending';
+            let stCls = expBadge(q) ? 'brn' : item.status === 'done' ? (!q.userStatus?.claimedAt ? 'uc' : 'dn') : item.status === 'failed' ? 'fl' : item.status === 'stopped' ? 'fl' : (item._paused || item.status === 'paused') && st.running ? 'pn' : item.status === 'running' ? 'rd' : '';
             let p = item.pct || 0;
             let pCls = item.status === 'done' ? 'dn' : item.status === 'failed' || item.status === 'stopped' ? 'fl' : '';
             let cfg = q.config.taskConfig ?? q.config.taskConfigV2;
@@ -1252,29 +1883,34 @@
             let selText = item._sel ? 'Deselect' : 'Select';
             let selBtnCls = item._sel ? 'qk-sel-btn qk-bb act' : 'qk-sel-btn qk-bb';
             let icoCls = '';
-            let firstReward = q.config.rewardsConfig?.rewards?.[0];
-            let rewIconUrl = firstReward?.type === 3 && firstReward.asset ? 'https://cdn.discordapp.com/' + firstReward.asset + '?format=webp&width=64&height=64' : null;
+            let rewards = q.config.rewardsConfig?.rewards || [];
+            let iconReward = rewards.find(r => r.type === 3 || r.avatarDecoration || r.profileEffect || r.profileEffectId || r.avatarDecorationDecoration)
+                || rewards.find(r => r.type === 4 || r.orbQuantity || r.amount || r.premiumOrbQuantity)
+                || rewards[0];
+let rewVid = (iconReward?.type === 3 || iconReward?.type === 1) && iconReward.asset && /\.(mp4|webm)(\?|$)/i.test(iconReward.asset);
+            let rewIconUrl = (iconReward?.type === 3 || iconReward?.type === 1) && iconReward.asset ? 'https://cdn.discordapp.com/' + iconReward.asset + (rewVid ? '' : '?format=webp&width=64&height=64') : null;
             let appIcon = q.config.application?.id && appCache[q.config.application.id];
-            let icoHtml = rewIconUrl ? '<img src="' + rewIconUrl + '" style="width:34px;height:34px;border-radius:8px;display:block">'
-                : firstReward?.type === 4
-                ? '<img src="https://cdn.discordapp.com/assets/content/fb761d9c206f93cd8c4e7301798abe3f623039a4054f2e7accd019e1bb059fc8.webm?format=webp" style="width:34px;height:34px;border-radius:8px;display:block">'
+            let icoHtml = rewVid ? '<video class="qk-rw-vid" muted loop playsinline preload="none" src="' + rewIconUrl + '"></video>'
+                : rewIconUrl ? '<img src="' + rewIconUrl + '" style="width:34px;height:34px;border-radius:8px;display:block">'
+                : iconReward?.type === 4
+                ? '<video class="qk-orb-card" muted loop playsinline preload="none" src="https://cdn.discordapp.com/assets/content/b8fe318002139f2fabd6255aef10a0a625bb10aa9f8394efd6575115c1dca19a.webm"></video>'
                 : appIcon ? '<img src="https://cdn.discordapp.com/app-icons/' + q.config.application.id + '/' + appIcon + '.png?size=64" style="width:34px;height:34px;border-radius:8px;display:block">'
-                : '<img src="https://cdn.discordapp.com/assets/content/fb761d9c206f93cd8c4e7301798abe3f623039a4054f2e7accd019e1bb059fc8.webm?format=webp" style="width:34px;height:34px;border-radius:8px;display:block">';
+                : '<video class="qk-orb-card" muted loop playsinline preload="none" src="https://cdn.discordapp.com/assets/content/b8fe318002139f2fabd6255aef10a0a625bb10aa9f8394efd6575115c1dca19a.webm"></video>';
             let banUrl = q.config.assets?.quest_bar_hero || q.config.assets?.hero;
             let banFull = banUrl ? (banUrl.startsWith('http') ? banUrl : 'https://cdn.discordapp.com/' + banUrl + (banUrl.includes('?') ? '' : '?format=webp&width=1320&height=370')) : '';
             let banVidUrl = q.config.assets?.heroVideo || q.config.assets?.questBarHeroVideo;
-            let banVid = banVidUrl ? (banVidUrl.startsWith('http') ? banVidUrl : 'https://cdn.discordapp.com/' + banVidUrl) : null;
+            let banVid = banVidUrl ? buildAssetUrl(q.id, banVidUrl) : null;
             let logoData = getGameLogo(q);
             let logoUrl = logoData ? logoData.url : null;
             let isTerminal = item.status === 'done' || item.status === 'failed' || item.status === 'stopped';
             let selDisabled = isTerminal ? ' disabled' : '';
             let selBtnClsFinal = isTerminal ? 'qk-sel-btn qk-bb' : selBtnCls;
             let selTextFinal = isTerminal ? (item.status === 'done' ? 'Done' : item.status === 'failed' ? 'Failed' : 'Stopped') : selText;
-            let vqLabel = (q.userStatus?.completedAt && !q.userStatus?.claimedAt) ? 'Claim' : 'View Quest';
+            let vqLabel = (q.userStatus?.completedAt && !q.userStatus?.claimedAt) ? 'Claim' : (item.status === 'done') ? 'View Reward' : 'View Quest';
             html += '<div class="qk-cd' + selCls + '" data-qidx="' + idx + '" data-i="' + idx + '" data-curr="' + (item.curr || 0) + '" data-need="' + need + '" data-display-need="' + displayNeed + '" data-unit="' + unit + '" data-status="' + item.status + '">' +
                 '<div class="qk-ban-wrap">' +
                 (banFull ? '<img class="qk-ban" src="' + banFull + '" loading="lazy" onerror="this.style.display=\'none\'">' : '<div class="qk-ban qk-ban-g"></div>') +
-                (banVid ? '<video class="qk-ban-vid" muted loop playsinline src="' + banVid + '" onerror="this.style.display=\'none\'"></video>' : '') +
+                (banVid ? '<video class="qk-ban-vid" muted loop playsinline preload="none" src="' + banVid + '" onerror="this.style.display=\'none\'"></video>' : '') +
                 '<div class="qk-ban-overlay"></div>' +
                 (logoUrl ? '<div class="qk-game-logo-wrap"><img class="qk-game-logo" src="' + logoUrl + '" loading="lazy" onerror="this.style.display=\'none\'"><span class="qk-promoted">Promoted by <strong>' + (q.config.messages?.gameTitle || q.config.application?.name || 'Quest') + '</strong></span></div>' : '') +
                 '</div>' +
@@ -1288,6 +1924,7 @@
                 '</div></div>';
         }
         list.innerHTML = html;
+        hydrateStaticFrames(list);
         list.querySelectorAll('.qk-cd[data-qidx]').forEach(cd => {
             cd.addEventListener('mouseenter', () => {
                 let curr = parseInt(cd.dataset.curr) || 0;
@@ -1366,10 +2003,11 @@
                 let i = parseInt(btn.dataset.i);
                 let item = st.queue[i];
                         if (item) {
-                            gotoQuest(item.q.id);
+                            (item.q.userStatus?.completedAt && !item.q.userStatus?.claimedAt) ? claimQuest(item.q) : gotoQuest(item.q.id);
                         }
             };
         });
+        bindOrbHover(list);
     }
 
     function renderHypeSquad() {
@@ -1407,14 +2045,16 @@
         if (D.stopq) D.stopq.disabled = !hasRunning || !hasSelected;
     }
 
+    let _transCache = null;
     function findTransitionTo() {
+        if (_transCache) return _transCache;
         try {
             let wpRequire = webpackChunkdiscord_app.push([[Symbol()], {}, r => r]);
             webpackChunkdiscord_app.pop();
             let modules = Object.values(wpRequire.c);
             for (let m of modules) {
                 for (let v of Object.values(m?.exports || {})) {
-                    if (v && typeof v === 'function' && v.toString().includes('transitionTo - Transitioning to')) return v;
+                    if (v && typeof v === 'function' && v.toString().includes('transitionTo - Transitioning to')) return _transCache = v;
                 }
             }
         } catch {}
@@ -1424,7 +2064,12 @@
     function gotoQuest(qid) {
         let trans = findTransitionTo();
         if (trans) {
-            trans('/quest-home#' + qid);
+            trans('/quest-home');
+            setTimeout(() => {
+                let t2 = findTransitionTo();
+                if (t2) t2('/quest-home#' + qid);
+                else location.hash = '#' + qid;
+            }, 350);
             return true;
         }
         if (location.pathname === '/quest-home') {
@@ -1435,47 +2080,187 @@
         return true;
     }
 
-async function processQueue() {
+    function updateShopLabel() {
+        const el = document.getElementById('qk-shop');
+        if (!el) return;
+        const inShop = location.pathname.indexOf('/shop') === 0;
+        el.textContent = inShop ? 'Open Quest Home' : 'Open the Shop';
+    }
+    function toggleShop() {
+        const inShop = location.pathname.indexOf('/shop') === 0;
+        const dest = inShop ? '/quest-home' : '/shop';
+        if (D && D.ob) D.ob.classList.remove('open');
+        let t = findTransitionTo();
+        if (t) t(dest);
+        else if (inShop) location.hash = '#quest-home';
+        else location.href = dest;
+        updateShopLabel();
+    }
+
+    function findClaimButton(qid) {
+        const container = document.querySelector('.contentSection_b6bcee, .contentSection__955a3, [class*="contentSection"]');
+        if (!container) return null;
+        const btns = container.querySelectorAll('button');
+        for (const b of btns) {
+            if (b.closest('#questku-panel')) continue;
+            if (b.offsetParent === null) continue;
+            const t = (b.textContent || '').trim();
+            if (/claim/i.test(t)) return b;
+        }
+        return null;
+    }
+
+    async function claimAPI(q) {
+        const tok = getTok();
+        if (!tok) return { fallback: true };
+        const body = {
+            platform: 0,
+            location: 11,
+            is_targeted: false,
+            metadata_sealed: null,
+            traffic_metadata_sealed: q.config?.traffic_metadata_sealed || null
+        };
+        const headers = {
+            authorization: tok,
+            'content-type': 'application/json',
+            'x-super-properties': DESKTOP_SP,
+            'user-agent': DESKTOP_UA,
+            origin: 'https://discord.com',
+            referer: 'https://discord.com/quest-home'
+        };
+        let res = await directFetch('POST', '/quests/' + q.id + '/claim-reward', body, headers);
+        if (!res) return { fallback: true };
+        if (res.status >= 200 && res.status < 300) return { ok: true };
+        if (res.status === 429) {
+            await sleepSec((res.body?.retry_after || 5) + Math.random() * 2);
+            return claimAPI(q);
+        }
+        if (res.status === 409) return { ok: true, already: true };
+        return { fallback: true, status: res.status };
+    }
+
+    async function claimQuest(q) {
+        if (!q || q.userStatus?.claimedAt) return;
+        const r = await claimAPI(q);
+        if (r.fallback) {
+            await claimViaUI(q);
+            return;
+        }
+        await refreshQuests();
+    }
+
+    function claimViaUI(q) {
+        if (!q || q.userStatus?.claimedAt || q._claiming) return Promise.resolve();
+        q._claiming = true;
+        gotoQuest(q.id);
+        return (async () => {
+            let btn = null;
+            for (let i = 0; i < 40 && !btn; i++) {
+                await sleepSec(0.25);
+                btn = findClaimButton(q.id);
+            }
+            if (btn) {
+                try { btn.click(); log.ok('Claim: ' + (q.config?.messages?.questName || q.id)); }
+                catch (e) { log.e('Claim click error: ' + (e.message || e)); }
+                for (let i = 0; i < 10; i++) {
+                    await sleepSec(1);
+                    const fresh = Q?.Quest?.quests?.get ? Q.Quest.quests.get(q.id) : q;
+                    if (fresh?.userStatus?.claimedAt || q.userStatus?.claimedAt) break;
+                }
+            } else {
+                log.i('Claim button not found: ' + (q.config?.messages?.questName || q.id));
+            }
+            await refreshQuests();
+            q._claiming = false;
+        })();
+    }
+
+async function runItem(item) {
+        if (!st.running) return;
+        if (item._paused || item.status === 'paused') {
+            item.status = 'paused';
+            renderProgress();
+            while (item._paused && st.running) await sleep(500);
+            if (!st.running) return;
+            item.status = 'running';
+        }
+        if (!st.running) return;
+        item.status = 'running';
+        renderProgress(); renderAllQuests();
+
+        let transient = false;
+        if (set.autoEnroll && !item.q.userStatus?.enrolledAt) {
+            log.i('Enrolling: ' + item.q.config.messages.questName);
+            let r = await enrollQuest(item.q);
+            if (!r.ok) {
+                transient = !r.permanent;
+                if (!transient) { log.e('Enroll failed: ' + item.q.config.messages.questName); item.status = 'failed'; }
+            }
+        }
+
+        if (item.status !== 'failed') {
+            try {
+                await processQuest(item);
+            }
+            catch (e) { log.e('Quest error: ' + (e.message || e)); if (st.running) { item.status = 'failed'; transient = true; } }
+        }
+
+        while (item.status === 'failed' && transient && item.attempts < ITEM_MAX_RETRIES && st.running) {
+            item.attempts++;
+            item.status = 'retry';
+            let w = Math.pow(2, item.attempts) * 5;
+            log.i('Retry ' + item.attempts + '/' + ITEM_MAX_RETRIES + ' in ' + w + 's: ' + item.q.config.messages.questName);
+            saveQueue();
+            renderProgress(); renderAllQuests();
+            for (let t = 0; t < w && st.running; t++) await sleep(1000);
+            if (!st.running) return;
+            transient = false;
+            item.status = 'running';
+            try {
+                await processQuest(item);
+            }
+            catch (e) { log.e('Quest error: ' + (e.message || e)); if (st.running) { item.status = 'failed'; transient = true; } }
+        }
+
+        if (item.status === 'done') { st.completed++; }
+        else if (item.status === 'failed') st.failed++;
+        else if (item.status === 'stopped') st.stopped++;
+        if (item.status === 'done' && set.autoClaim && !item.q.userStatus?.claimedAt) {
+            const r = await claimAPI(item.q);
+            if (r.fallback) await claimViaUI(item.q);
+            else await refreshQuests();
+        }
+        saveQueue();
+        renderProgress(); renderAllQuests();
+    }
+
+    async function processQueue() {
         if (st.running) return;
         st.running = true;
         renderProgress(); renderAllQuests();
 
+        let blast = enrollmentBlocked();
+        if (blast) {
+            log.e('Enrollment blocked by Discord until ' + blast.toISOString() + ' - stopping engine.');
+            st.running = false;
+            renderProgress(); renderAllQuests();
+            return;
+        }
+
         for (let i = 0; i < st.queue.length; i++) {
             if (!st.running) break;
             let item = st.queue[i];
-
-            if (item.status === 'done' || item.status === 'failed' || item.status === 'stopped') {
+            if (item.status === 'done' || item.status === 'failed' || item.status === 'stopped') continue;
+            if (isWatchQuest(item)) {
+                const group = [item];
+                for (let j = i + 1; j < st.queue.length && group.length < 2; j++) {
+                    const it = st.queue[j];
+                    if (it.status !== 'done' && it.status !== 'failed' && it.status !== 'stopped' && isWatchQuest(it)) group.push(it);
+                }
+                await Promise.all(group.map(g => runItem(g)));
                 continue;
             }
-
-            if (item._paused || item.status === 'paused') {
-                item.status = 'paused';
-                renderProgress();
-                while (item._paused && st.running) {
-                    await sleep(500);
-                }
-                if (!st.running) break;
-                item.status = 'running';
-            }
-
-            item.status = 'running';
-            renderProgress(); renderAllQuests();
-
-            if (set.autoEnroll && !item.q.userStatus?.enrolledAt) {
-                log.i('Enrolling: ' + item.q.config.messages.questName);
-                let ok = await enrollQuest(item.q);
-                if (!ok) { log.e('Enroll failed: ' + item.q.config.messages.questName); item.status = 'failed'; st.failed++; renderProgress(); renderAllQuests(); continue; }
-            }
-
-            try {
-                await processQuest(item);
-            }
-            catch (e) { log.e('Quest error: ' + (e.message || e)); if (st.running) item.status = 'failed'; }
-
-            if (item.status === 'done') { st.completed++; }
-            else if (item.status === 'failed') st.failed++;
-            else if (item.status === 'stopped') st.stopped++;
-            renderProgress(); renderAllQuests();
+            await runItem(item);
         }
 
         st.running = false;
@@ -1506,8 +2291,8 @@ async function processQueue() {
         if (!cd) return;
         cd.dataset.curr = item.curr || 0;
         cd.dataset.status = item.status;
-        let stLabel = item.status === 'done' ? (item.q.userStatus?.completedAt && !item.q.userStatus?.claimedAt ? 'Unclaimed' : 'Done') : item.status === 'failed' ? 'Failed' : item.status === 'stopped' ? 'Stopped' : (item._paused || item.status === 'paused') && st.running ? 'Paused' : item.status === 'running' ? 'Running' : 'Pending';
-        let stCls = item.status === 'done' ? (item.q.userStatus?.completedAt && !item.q.userStatus?.claimedAt ? 'uc' : 'dn') : item.status === 'failed' ? 'fl' : item.status === 'stopped' ? 'fl' : (item._paused || item.status === 'paused') && st.running ? 'pn' : item.status === 'running' ? 'rd' : '';
+        let stLabel = expBadge(item.q) ? 'Expired' : item.status === 'done' ? (!item.q.userStatus?.claimedAt ? 'Unclaimed' : 'Done') : item.status === 'failed' ? 'Failed' : item.status === 'stopped' ? 'Stopped' : item.status === 'retry' ? 'Retry' : (item._paused || item.status === 'paused') && st.running ? 'Paused' : item.status === 'running' ? 'Running' : 'Pending';
+        let stCls = item.status === 'done' ? (!item.q.userStatus?.claimedAt ? 'uc' : 'dn') : item.status === 'failed' ? 'fl' : item.status === 'stopped' ? 'fl' : item.status === 'retry' ? 'pn' : (item._paused || item.status === 'paused') && st.running ? 'pn' : item.status === 'running' ? 'rd' : '';
         let tg = cd.querySelector('.qk-tg');
         if (tg) { tg.textContent = stLabel; tg.className = 'qk-tg' + (stCls ? ' ' + stCls : ''); }
         let ico = cd.querySelector('.qk-ico');
@@ -1534,7 +2319,9 @@ async function processQueue() {
         const t = TASKS.find(x => cfg.tasks[x] != null);
         const isPlay = t === 'PLAY_ON_DESKTOP' || t === 'PLAY_ON_XBOX' || t === 'PLAY_ON_PLAYSTATION';
         const isStream = t === 'STREAM_ON_DESKTOP';
-        const hasApp = isPlay || isStream;
+        const isActivity = t === 'PLAY_ACTIVITY' || t === 'ACHIEVEMENT_IN_ACTIVITY';
+        const hasApp = isPlay || isStream || isActivity;
+        const owner = ME_ID || '1';
         
         let appId = null;
         let appName = q.config.messages.questName;
@@ -1558,7 +2345,7 @@ async function processQueue() {
         const unit = (t === 'WATCH_VIDEO' || t === 'WATCH_VIDEO_ON_MOBILE') ? 's' : 'min';
 
         log.start();
-        log.gr(tName + ' — ' + qName + ' — app: ' + appName);
+        log.gr(tName + ' - ' + qName + ' - app: ' + appName);
         log.i(tName + ' (' + need + ' ' + unit + ')');
 
         function finish(ok) {
@@ -1569,18 +2356,24 @@ async function processQueue() {
 
         if (t === 'WATCH_VIDEO' || t === 'WATCH_VIDEO_ON_MOBILE') {
             let completed = false;
-            for (let ts = done + 7; ts < need; ts += 7) {
-                if (!st.running) { finish(false); return; }
-                for (let w = 0; w < 14 && st.running; w++) { await sleep(500); if (item._paused) { while (item._paused && st.running) await sleep(500); } }
-                if (!st.running) { finish(false); return; }
-                let res = await apiReq('POST', '/quests/' + q.id + '/video-progress', { timestamp: Math.min(need, ts + Math.random()) });
+            if (st.running) {
+                let res = await apiReq('POST', '/quests/' + q.id + '/video-progress', { timestamp: need });
                 completed = res?.body?.completed_at != null;
-                let val = Math.min(need, ts);
-                log.i('[ ' + pct(val, need) + '% ] ' + fmtDur(log._el()));
-                item.pct = pct(val, need);
-                item.curr = val;
-                updateProgTick(item);
-                if (completed) break;
+                if (completed) { item.curr = need; item.pct = 100; updateProgTick(item); }
+            }
+            if (!completed && st.running) {
+                for (let ts = done + 7; ts < need; ts += 7) {
+                    if (!st.running) { finish(false); return; }
+                    for (let w = 0; w < 14 && st.running; w++) { await sleep(500); if (item._paused) { while (item._paused && st.running) await sleep(500); } }
+                    if (!st.running) { finish(false); return; }
+                    let res = await apiReq('POST', '/quests/' + q.id + '/video-progress', { timestamp: Math.min(need, ts + Math.random()) });
+                    completed = res?.body?.completed_at != null;
+                    let val = Math.min(need, ts);
+                    let np = pct(val, need); logPct(item, np);
+                    item.curr = val;
+                    updateProgTick(item);
+                    if (completed) break;
+                }
             }
             if (!completed && st.running) {
                 let res = await apiReq('POST', '/quests/' + q.id + '/video-progress', { timestamp: need });
@@ -1609,13 +2402,9 @@ async function processQueue() {
                         if (item._paused) { updateProgTick(item); return; }
                         
                         try {
-                            let res = await apiReq('POST', '/quests/' + q.id + '/heartbeat', { 
-                                stream_key: 'call:' + pid + ':1', 
-                                terminal: false 
-                            });
+                            let res = await apiReq('POST', '/quests/' + q.id + '/heartbeat', { stream_key: 'call:' + pid + ':' + owner, application_id: appId, terminal: false });
                             let p = Math.floor(res?.body?.progress?.[t]?.value ?? res?.body?.userStatus?.progress?.[t]?.value ?? 0);
-                            log.i('[ ' + pct(p, need) + '% ] ' + fmtDur(log._el()));
-                            item.pct = pct(p, need);
+                            let np = pct(p, need); logPct(item, np);
                             item.curr = p;
                             updateProgTick(item);
                             
@@ -1633,12 +2422,13 @@ async function processQueue() {
                         }
                     }
 
-intervalId = setInterval(sendHeartbeat, 5000);
+                    intervalId = setInterval(sendHeartbeat, 5000);
                     
                     sendHeartbeat();
 
                     st._cleanups.push(() => {
                         clearInterval(intervalId);
+                        if (finished) return;
                         finished = true;
                         Q.Game.getRunningGames = g.realGet;
                         Q.Game.getGameForPID = g.realPidGet;
@@ -1663,13 +2453,9 @@ intervalId = setInterval(sendHeartbeat, 5000);
                     if (item._paused) { updateProgTick(item); return; }
                     
                     try {
-                        let res = await apiReq('POST', '/quests/' + q.id + '/heartbeat', { 
-                            stream_key: 'call:' + pid + ':1', 
-                            terminal: false 
-                        });
+                        let res = await apiReq('POST', '/quests/' + q.id + '/heartbeat', { stream_key: 'call:' + pid + ':' + owner, application_id: appId, terminal: false });
                         let p = Math.floor(res?.body?.progress?.STREAM_ON_DESKTOP?.value ?? res?.body?.userStatus?.progress?.STREAM_ON_DESKTOP?.value ?? 0);
-                        log.i('[ ' + pct(p, need) + '% ] ' + fmtDur(log._el()));
-                        item.pct = pct(p, need);
+                        let np = pct(p, need); logPct(item, np);
                         item.curr = p;
                         updateProgTick(item);
                         
@@ -1685,11 +2471,12 @@ intervalId = setInterval(sendHeartbeat, 5000);
                     }
                 }
 
-                intervalId = setInterval(sendHeartbeat, 5000);
+                    intervalId = setInterval(sendHeartbeat, 5000);
                 sendHeartbeat();
 
                 st._cleanups.push(() => {
                     clearInterval(intervalId);
+                    if (finished) return;
                     finished = true;
                     Q.Streaming.getStreamerActiveStreamMetadata = realStream;
                     finish(false); 
@@ -1698,26 +2485,60 @@ intervalId = setInterval(sendHeartbeat, 5000);
             });
         }
         else if (t === 'PLAY_ACTIVITY') {
-            let cid = Q.Channel?.getSortedPrivateChannels()?.[0]?.id ||
-                Object.values(Q.Guild?.getAllGuilds?.() || {}).find(x => x?.VOCAL?.length > 0)?.VOCAL[0]?.channel?.id;
+            let gid = null;
+            let cid = null;
+            for (const g of Object.values(Q.Guild?.getAllGuilds?.() || {})) {
+                const v = g?.VOCAL;
+                const ch = Array.isArray(v) ? v.find(x => x?.channel)?.channel : null;
+                if (ch?.id) { cid = ch.id; gid = g.id; break; }
+            }
+            if (!cid) cid = Q.Channel?.getSortedPrivateChannels()?.[0]?.id;
             if (!cid) { log.e('No channel found for activity.'); finish(false); return; }
+            const sk = gid ? 'guild:' + gid + ':' + cid + ':' + owner : 'call:' + cid + ':' + owner;
+            const hb = (term) => directPost('/quests/' + q.id + '/heartbeat', { stream_key: sk, application_id: appId, terminal: term }) || apiReq('POST', '/quests/' + q.id + '/heartbeat', { stream_key: sk, application_id: appId, terminal: term });
             while (st.running) {
                 if (item._paused) { while (item._paused && st.running) await sleep(500); }
                 if (!st.running) break;
-                let res = await directPost('/quests/' + q.id + '/heartbeat', { stream_key: 'call:' + cid + ':1', terminal: false }) || await apiReq('POST', '/quests/' + q.id + '/heartbeat', { stream_key: 'call:' + cid + ':1', terminal: false });
+                let res = await hb(false);
                 let p = res?.body?.progress?.[t]?.value || 0;
-                log.i('[ ' + pct(p, need) + '% ] ' + fmtDur(log._el()));
-                item.pct = pct(p, need);
+                let np = pct(p, need); logPct(item, np);
                 item.curr = p;
                 updateProgTick(item);
                 for (let w = 0; w < 40 && st.running && !item._paused; w++) { await sleep(500); }
                 if (item._paused) { while (item._paused && st.running) await sleep(500); }
-                if (p >= need && st.running) { await directPost('/quests/' + q.id + '/heartbeat', { stream_key: 'call:' + cid + ':1', terminal: true }) || await apiReq('POST', '/quests/' + q.id + '/heartbeat', { stream_key: 'call:' + cid + ':1', terminal: true }); break; }
+                if (p >= need && st.running) { await hb(true); break; }
             }
             finish(st.running);
+        }
+        else if (t === 'ACHIEVEMENT_IN_ACTIVITY') {
+            const appIdStr = String(appId || '');
+            if (!/^\d+$/.test(appIdStr)) { log.e('ACHIEVEMENT: quest has no appId, nothing to authorize.'); finish(false); return; }
+            let done = false;
+            try {
+                let key = null;
+                for (const g of Object.values(Q.Guild?.getAllGuilds?.() || {})) {
+                    const v = g?.VOCAL; const ch = Array.isArray(v) ? v.find(x => x?.channel)?.channel : null;
+                    if (ch?.id) { key = 'guild:' + (ch.guild_id || g.id) + ':' + ch.id + ':' + owner; break; }
+                }
+                if (!key) { const dm = Q.Channel?.getSortedPrivateChannels?.()?.[0]?.id; if (dm) key = 'call:' + dm + ':' + owner; }
+                if (key) {
+                    let res = await directPost('/quests/' + q.id + '/heartbeat', { stream_key: key, application_id: appIdStr, terminal: false }) || await apiReq('POST', '/quests/' + q.id + '/heartbeat', { stream_key: key, application_id: appIdStr, terminal: false });
+                    let stt = res?.status || 0;
+                    if (stt >= 200 && stt < 400 && (res?.body?.progress?.[t]?.value || 0) >= need) done = true;
+                }
+            } catch { /* heartbeat rejected (403 expected) - fall to bypass */ }
+            if (!done && st.running) {
+                if (window.confirm('Questku: authorize "' + q.config.messages.questName + '" (appId ' + appIdStr + ') via OAuth?\nScopes: identify, applications.commands, applications.entitlements.\nGrant revoked right after. Riskiest operation - Discord may enforce against it.')) {
+                    done = await bypassAchievement(q, appIdStr, need);
+                } else { log.i('ACHIEVEMENT: consent declined.'); }
+            }
+            finish(done);
         }
     }
 
     buildDashboard();
-    refreshQuests();
+    syncPanelZ();
+    zWatch = setInterval(syncPanelZ, 900);
+    refreshQuests().then(() => restoreQueue());
+    refreshTimer = setInterval(() => { refreshQuests().catch(() => {}); }, 30000);
 })();

@@ -5,7 +5,7 @@ Thumbs.db
 extension/_metadata/
 extension/assets/Questku.png
 
-package*.json
+package-lock.json
 
 .claude/
 questku.md
